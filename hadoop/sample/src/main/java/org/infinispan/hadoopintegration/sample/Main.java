@@ -23,17 +23,17 @@ public class Main {
       String host = args[1];
       configuration.set("mapreduce.ispn.inputsplit.remote.cache.host", host);
 
-        configuration.set("mapreduce.ispn.input.remote.cache.host", host);
-        configuration.set("mapreduce.ispn.output.remote.cache.host", host);
+      configuration.set("mapreduce.ispn.input.remote.cache.host", host);
+      configuration.set("mapreduce.ispn.output.remote.cache.host", host);
 
-        configuration.set("mapreduce.ispn.input.cache.name", "map-reduce-in");
-        configuration.set("mapreduce.ispn.output.cache.name", "map-reduce-out");
+      configuration.set("mapreduce.ispn.input.cache.name", "map-reduce-in");
+      configuration.set("mapreduce.ispn.output.cache.name", "map-reduce-out");
 
-        configuration.set("mapreduce.ispn.input.converter", InputConverter.class.getCanonicalName());
-        configuration.set("mapreduce.ispn.output.converter", OutputConverter.class.getCanonicalName());
+      configuration.set("mapreduce.ispn.input.converter", InputConverter.class.getCanonicalName());
+      configuration.set("mapreduce.ispn.output.converter", OutputConverter.class.getCanonicalName());
 
-        JobConf jobConf = new JobConf(configuration, Main.class);
-        jobConf.setJobName("wordcount");
+      JobConf jobConf = new JobConf(configuration, Main.class);
+      jobConf.setJobName("wordcount");
 
         /*jobConf.setOutputKeyClass(String.class);
         jobConf.setOutputValueClass(Integer.class);
@@ -41,21 +41,21 @@ public class Main {
         jobConf.set("io.serializations", "org.apache.hadoop.io.serializer.WritableSerialization,org.apache.hadoop.io.serializer.JavaSerialization");
         */
 
-        jobConf.setOutputKeyClass(Text.class);
-        jobConf.setOutputValueClass(IntWritable.class);
+      jobConf.setOutputKeyClass(Text.class);
+      jobConf.setOutputValueClass(IntWritable.class);
 
-        jobConf.setMapperClass(MapClass.class);
-        jobConf.setReducerClass(ReduceClass.class);
+      jobConf.setMapperClass(MapClass.class);
+      jobConf.setReducerClass(ReduceClass.class);
 
-        //FileInputFormat.addInputPath(jobConf, new Path(args[0]));
-        //FileOutputFormat.setOutputPath(jobConf, new Path(args[1]));
-        jobConf.setInputFormat(InfinispanInputFormat.class);
-        jobConf.setOutputFormat(InfinispanOutputFormat.class);
-        System.out.println("About to run the job!!!!");
-        JobClient.runJob(jobConf);
+      //FileInputFormat.addInputPath(jobConf, new Path(args[0]));
+      //FileOutputFormat.setOutputPath(jobConf, new Path(args[1]));
+      jobConf.setInputFormat(InfinispanInputFormat.class);
+      jobConf.setOutputFormat(InfinispanOutputFormat.class);
+      System.out.println("About to run the job!!!!");
+      JobClient.runJob(jobConf);
 
-        System.out.println("Finished executing job.");
-        System.out.println("CACHE CONTENT:");
+      System.out.println("Finished executing job.");
+      System.out.println("CACHE CONTENT:");
 
         /*RemoteCacheManager remoteCacheManager = new RemoteCacheManager("10.35.23.11");
         System.out.println(" =========================== INPUT ================================ ");
@@ -65,18 +65,18 @@ public class Main {
         //System.out.println(remoteCacheManager.getCache("map-reduce-out").getBulk());
         System.out.println(" ================================================================== ");
         */
-    }
+   }
 
-    public static class StringComparator implements RawComparator<String> {
+   public static class StringComparator implements RawComparator<String> {
 
-        @Override
-        public int compare(byte[] bytes, int i, int i2, byte[] bytes2, int i3, int i4) {
-            return WritableComparator.compareBytes(bytes, i, i2, bytes2, i3, i4);
-        }
+      @Override
+      public int compare(byte[] bytes, int i, int i2, byte[] bytes2, int i3, int i4) {
+         return WritableComparator.compareBytes(bytes, i, i2, bytes2, i3, i4);
+      }
 
-        @Override
-        public int compare(String o1, String o2) {
-            return o1.compareTo(o2);
-        }
-    }
+      @Override
+      public int compare(String o1, String o2) {
+         return o1.compareTo(o2);
+      }
+   }
 }

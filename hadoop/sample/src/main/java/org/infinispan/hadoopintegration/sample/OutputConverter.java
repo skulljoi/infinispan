@@ -12,13 +12,13 @@ import org.infinispan.hadoopintegration.mapreduce.output.InfinispanOutputConvert
  */
 public class OutputConverter implements InfinispanOutputConverter<Text, IntWritable, String, Integer> {
 
-    @Override
-    public String convertKey(Text text) {
-        return text.toString();
-    }
+   @Override
+   public String convertKey(Text text) {
+      return text.toString();
+   }
 
-    @Override
-    public Integer convertValue(IntWritable intWritable) {
-        return intWritable.get();
-    }
+   @Override
+   public Integer convertValue(IntWritable intWritable) {
+      return intWritable.get();
+   }
 }

@@ -8,21 +8,21 @@ package org.infinispan.hadoopintegration;
  */
 public class InfinispanObject<K> {
 
-    K value;
+   K value;
 
-    public InfinispanObject() {
-        this(null);
-    }
+   public InfinispanObject() {
+      this(null);
+   }
 
-    public InfinispanObject(K value) {
-        this.value = value;
-    }
+   public InfinispanObject(K value) {
+      this.value = value;
+   }
 
-    public K get() {
-        return value;
-    }
+   public K get() {
+      return value;
+   }
 
-    public void set(K value) {
-        this.value = value;
-    }
+   public void set(K value) {
+      this.value = value;
+   }
 }

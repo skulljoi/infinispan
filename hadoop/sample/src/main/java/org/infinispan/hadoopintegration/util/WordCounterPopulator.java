@@ -14,7 +14,7 @@ import java.util.*;
  * @author Pedro Ruivo
  * @since 7.0
  */
-public class WorldCounterPopulator {
+public class WordCounterPopulator {
 
     public static void main(String[] args) throws Exception {
         Map<Argument, String> map = new EnumMap<Argument, String>(Argument.class);

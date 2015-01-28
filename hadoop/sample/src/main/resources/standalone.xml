@@ -44,7 +44,8 @@
                 <json-formatter name="json-formatter"/>
             </formatters>
             <handlers>
-                <file-handler name="file" formatter="json-formatter" relative-to="jboss.server.data.dir" path="audit-log.log"/>
+                <file-handler name="file" formatter="json-formatter" relative-to="jboss.server.data.dir"
+                              path="audit-log.log"/>
             </handlers>
             <logger log-boot="true" log-read-only="false" enabled="false">
                 <handlers>
@@ -120,7 +121,8 @@
                 <topology-state-transfer lazy-retrieval="false" lock-timeout="1000" replication-timeout="5000"/>
             </hotrod-connector>
             <memcached-connector socket-binding="memcached" cache-container="clustered"/>
-            <rest-connector virtual-server="default-host" cache-container="clustered" security-domain="other" auth-method="BASIC"/>
+            <rest-connector virtual-server="default-host" cache-container="clustered" security-domain="other"
+                            auth-method="BASIC"/>
             <websocket-connector socket-binding="websocket" cache-container="clustered"/>
         </subsystem>
         <subsystem xmlns="urn:jboss:domain:datasources:2.0">
@@ -128,12 +130,14 @@
         </subsystem>
         <subsystem xmlns="urn:infinispan:server:core:7.0" default-cache-container="clustered">
             <cache-container name="clustered" default-cache="default" statistics="true">
-                <transport executor="infinispan-transport" lock-timeout="60000" cluster="hadoop-ispn-cluster" />
-                <distributed-cache name="map-reduce-in" mode="SYNC" segments="20" owners="1" remote-timeout="30000" start="EAGER">
+                <transport executor="infinispan-transport" lock-timeout="60000" cluster="hadoop-ispn-cluster"/>
+                <distributed-cache name="map-reduce-in" mode="SYNC" segments="20" owners="1" remote-timeout="30000"
+                                   start="EAGER">
                     <locking acquire-timeout="30000" concurrency-level="1000" striping="false"/>
                     <transaction mode="NONE"/>
                 </distributed-cache>
-                <distributed-cache name="map-reduce-out" mode="SYNC" segments="20" owners="1" remote-timeout="30000" start="EAGER">
+                <distributed-cache name="map-reduce-out" mode="SYNC" segments="20" owners="1" remote-timeout="30000"
+                                   start="EAGER">
                     <locking acquire-timeout="30000" concurrency-level="1000" striping="false"/>
                     <transaction mode="NONE"/>
                 </distributed-cache>
@@ -184,7 +188,9 @@
             <stack name="tcp">
                 <transport type="TCP" socket-binding="jgroups-tcp"/>
                 <protocol type="TCPPING">
-                    <property name="initial_hosts">10.35.23.11[7600],10.35.23.12[7600],10.35.23.13[7600],10.35.23.15[7600]</property>
+                    <property name="initial_hosts">
+                        10.35.23.11[7600],10.35.23.12[7600],10.35.23.13[7600],10.35.23.15[7600]
+                    </property>
                 </protocol>
                 <protocol type="MERGE2"/>
                 <protocol type="FD_SOCK" socket-binding="jgroups-tcp-fd"/>
@@ -306,17 +312,20 @@
             <inet-address value="127.0.0.1"/>
         </interface>
     </interfaces>
-    <socket-binding-group name="standard-sockets" default-interface="public" port-offset="${jboss.socket.binding.port-offset:0}">
+    <socket-binding-group name="standard-sockets" default-interface="public"
+                          port-offset="${jboss.socket.binding.port-offset:0}">
         <socket-binding name="management-http" interface="management" port="${jboss.management.http.port:9990}"/>
         <socket-binding name="management-https" interface="management" port="${jboss.management.https.port:9993}"/>
         <socket-binding name="ajp" port="${jboss.ajp.port:8009}"/>
         <socket-binding name="hotrod" port="11222"/>
         <socket-binding name="http" port="${jboss.http.port:8080}"/>
         <socket-binding name="https" port="${jboss.https.port:8443}"/>
-        <socket-binding name="jgroups-mping" port="0" multicast-address="${jboss.default.multicast.address:234.99.54.14}" multicast-port="45700"/>
+        <socket-binding name="jgroups-mping" port="0"
+                        multicast-address="${jboss.default.multicast.address:234.99.54.14}" multicast-port="45700"/>
         <socket-binding name="jgroups-tcp" port="7600"/>
         <socket-binding name="jgroups-tcp-fd" port="57600"/>
-        <socket-binding name="jgroups-udp" port="55200" multicast-address="${jboss.default.multicast.address:234.99.54.14}" multicast-port="45688"/>
+        <socket-binding name="jgroups-udp" port="55200"
+                        multicast-address="${jboss.default.multicast.address:234.99.54.14}" multicast-port="45688"/>
         <socket-binding name="jgroups-udp-fd" port="54200"/>
         <socket-binding name="memcached" port="11211"/>
         <socket-binding name="modcluster" port="0" multicast-address="224.0.1.115" multicast-port="23364"/>
