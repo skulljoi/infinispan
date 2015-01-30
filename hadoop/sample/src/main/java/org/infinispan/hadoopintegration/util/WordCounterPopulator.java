@@ -51,12 +51,14 @@ public class WordCounterPopulator {
 
         String line;
         int lineNumber = 1;
+        System.out.println();
         while ((line = reader.readLine()) != null) {
             remoteCache.put(lineNumber++, line);
             if (lineNumber % 100 == 0) {
-                System.out.println("Line " + lineNumber + " added!");
+                System.out.printf("\rLine " + lineNumber + " added!");
             }
         }
+        System.out.println();
 
         reader.close();
         remoteCache.stop();

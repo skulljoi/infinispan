@@ -16,11 +16,11 @@ public class Main {
 
    public static void main(String[] args) throws IOException {
       Configuration configuration = new Configuration();
-      if (args.length != 2) {
+      if (args.length < 1) {
          System.err.println("Usage: hadoop jar <job jar> Main <ispn-server>");
          System.exit(2);
       }
-      String host = args[1];
+      String host = args[0];
       configuration.set("mapreduce.ispn.inputsplit.remote.cache.host", host);
 
       configuration.set("mapreduce.ispn.input.remote.cache.host", host);
