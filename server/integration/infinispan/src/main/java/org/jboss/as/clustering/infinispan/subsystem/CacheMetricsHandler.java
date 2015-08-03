@@ -14,6 +14,7 @@ import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.remoting.rpc.RpcManagerImpl;
 import org.infinispan.server.infinispan.SecurityActions;
+import org.infinispan.server.infinispan.spi.service.CacheServiceName;
 import org.infinispan.util.concurrent.locks.LockManagerImpl;
 import org.jboss.as.controller.AbstractRuntimeOnlyHandler;
 import org.jboss.as.controller.AttributeDefinition;
@@ -55,7 +56,7 @@ public class CacheMetricsHandler extends AbstractRuntimeOnlyHandler {
         AVERAGE_READ_TIME(MetricKeys.AVERAGE_READ_TIME, ModelType.LONG, true),
         AVERAGE_WRITE_TIME(MetricKeys.AVERAGE_WRITE_TIME, ModelType.LONG, true),
         AVERAGE_REMOVE_TIME(MetricKeys.AVERAGE_REMOVE_TIME, ModelType.LONG, true),
-        ELAPSED_TIME(MetricKeys.ELAPSED_TIME, ModelType.LONG, true),
+        TIME_SINCE_START(MetricKeys.TIME_SINCE_START, ModelType.LONG, true),
         EVICTIONS(MetricKeys.EVICTIONS, ModelType.LONG, true),
         HIT_RATIO(MetricKeys.HIT_RATIO, ModelType.DOUBLE, true),
         HITS(MetricKeys.HITS, ModelType.LONG, true),
@@ -135,7 +136,7 @@ public class CacheMetricsHandler extends AbstractRuntimeOnlyHandler {
         final String cacheContainerName = address.getElement(address.size() - 2).getValue();
         final String cacheName = address.getLastElement().getValue();
         final String attrName = operation.require(NAME).asString();
-        final ServiceController<?> controller = context.getServiceRegistry(false).getService(CacheService.getServiceName(cacheContainerName, cacheName));
+        final ServiceController<?> controller = context.getServiceRegistry(false).getService(CacheServiceName.CACHE.getServiceName(cacheContainerName, cacheName));
         Cache<?, ?> cache = (Cache<?, ?>) controller.getValue();
         CacheMetrics metric = CacheMetrics.getStat(attrName);
         ModelNode result = new ModelNode();
@@ -179,9 +180,9 @@ public class CacheMetricsHandler extends AbstractRuntimeOnlyHandler {
                     result.set(cacheMgmtInterceptor != null ? cacheMgmtInterceptor.getAverageRemoveTime() : 0);
                     break;
                 }
-                case ELAPSED_TIME: {
+                case TIME_SINCE_START: {
                     CacheMgmtInterceptor cacheMgmtInterceptor = getFirstInterceptorWhichExtends(interceptors, CacheMgmtInterceptor.class);
-                    result.set(cacheMgmtInterceptor != null ? cacheMgmtInterceptor.getElapsedTime() : 0);
+                    result.set(cacheMgmtInterceptor != null ? cacheMgmtInterceptor.getTimeSinceStart() : 0);
                     break;
                 }
                 case EVICTIONS: {

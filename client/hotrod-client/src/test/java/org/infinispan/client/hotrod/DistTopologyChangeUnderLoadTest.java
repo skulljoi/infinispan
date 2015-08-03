@@ -19,7 +19,7 @@ import static org.infinispan.client.hotrod.test.HotRodClientTestingUtil.getLoadB
 import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheConfiguration;
 import static org.testng.AssertJUnit.assertEquals;
 
-@Test(groups = "functional", testName = "client.hotrod.DistKeepRunningWithTopologyChangeTest")
+@Test(groups = "functional", testName = "client.hotrod.DistTopologyChangeUnderLoadTest")
 public class DistTopologyChangeUnderLoadTest extends MultiHotRodServersTest {
 
    @Override
@@ -31,6 +31,11 @@ public class DistTopologyChangeUnderLoadTest extends MultiHotRodServersTest {
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(CacheMode.DIST_SYNC, false);
       builder.clustering().hash().numOwners(2);
       return hotRodCacheConfiguration(builder);
+   }
+
+   @Override
+   protected int maxRetries() {
+      return 1;
    }
 
    public void testPutsSucceedWhileTopologyChanges() throws Exception {
@@ -53,6 +58,8 @@ public class DistTopologyChangeUnderLoadTest extends MultiHotRodServersTest {
       TestingUtil.killCacheManagers(cm);
       TestingUtil.waitForRehashToComplete(cache(0));
 
+      // Execute one more operation to guarantee topology update on the client
+      remote.put(-1, "minus one");
       RoundRobinBalancingStrategy strategy = getLoadBalancer(client(0));
       SocketAddress[] servers = strategy.getServers();
 

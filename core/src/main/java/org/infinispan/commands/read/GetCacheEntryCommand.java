@@ -48,6 +48,7 @@ public final class GetCacheEntryCommand extends AbstractDataCommand implements R
       if (entry.isRemoved()) {
          return null;
       }
+
       return entryFactory.copy(entry);
    }
 

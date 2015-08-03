@@ -13,28 +13,22 @@ import org.infinispan.remoting.transport.Address;
  * @since 4.0
  */
 public abstract class AbstractInvocationContext implements InvocationContext {
-
-   private boolean isOriginLocal = false;
-   private Address origin;
+   private final Address origin;
    // Class loader associated with this invocation which supports AdvancedCache.with() functionality
    private ClassLoader classLoader;
+
+   protected AbstractInvocationContext(Address origin) {
+      this.origin = origin;
+   }
 
    @Override
    public final Address getOrigin() {
 	   return origin;
    }
 
-   public final void setOrigin(Address origin) {
-	   this.origin = origin;
-   }
-
    @Override
    public boolean isOriginLocal() {
-      return isOriginLocal;
-   }
-
-   public final void setOriginLocal(boolean originLocal) {
-      this.isOriginLocal = originLocal;
+      return origin == null;
    }
 
    @Override
@@ -62,7 +56,7 @@ public abstract class AbstractInvocationContext implements InvocationContext {
    }
 
    @Override
-   public final boolean replaceValue(final Object key, final InternalCacheEntry cacheEntry) {
+   public boolean replaceValue(final Object key, final InternalCacheEntry cacheEntry) {
       CacheEntry ce = lookupEntry(key);
       if (ce == null || ce.isNull() || ce.getValue() == null) {
          if (ce != null) {
@@ -77,7 +71,7 @@ public abstract class AbstractInvocationContext implements InvocationContext {
    }
 
    @Override
-   public final boolean isEntryRemovedInContext(final Object key) {
+   public boolean isEntryRemovedInContext(final Object key) {
       CacheEntry ce = lookupEntry(key);
       return ce != null && ce.isRemoved() && ce.isChanged();
    }

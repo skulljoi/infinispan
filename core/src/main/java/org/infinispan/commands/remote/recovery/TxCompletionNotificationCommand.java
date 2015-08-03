@@ -91,6 +91,12 @@ public class TxCompletionNotificationCommand  extends RecoveryCommand implements
       if (remoteTx == null && gtx != null) {
          remoteTx = txTable.removeRemoteTransaction(gtx);
       }
+      boolean successful = remoteTx != null && !remoteTx.isMarkedForRollback();
+      if (gtx != null) {
+         txTable.markTransactionCompleted(gtx, successful);
+      } else if (remoteTx != null) {
+         txTable.markTransactionCompleted(remoteTx.getGlobalTransaction(), successful);
+      }
       if (remoteTx == null) return null;
       forwardCommandRemotely(remoteTx);
 
@@ -108,7 +114,7 @@ public class TxCompletionNotificationCommand  extends RecoveryCommand implements
    private void forwardCommandRemotely(RemoteTransaction remoteTx) {
       Set<Object> affectedKeys = remoteTx.getAffectedKeys();
       log.tracef("Invoking forward of TxCompletionNotification for transaction %s. Affected keys: %s", gtx, affectedKeys);
-      stateTransferManager.forwardCommandIfNeeded(this, affectedKeys, remoteTx.getGlobalTransaction().getAddress(), false);
+      stateTransferManager.forwardCommandIfNeeded(this, affectedKeys, remoteTx.getGlobalTransaction().getAddress());
    }
 
    @Override

@@ -1,5 +1,15 @@
 package org.infinispan.configuration.parsing;
 
+import static org.infinispan.test.TestingUtil.withCacheManager;
+import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertFalse;
+import static org.testng.AssertJUnit.assertTrue;
+import static org.testng.AssertJUnit.fail;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+
 import org.infinispan.Version;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.equivalence.ByteArrayEquivalence;
@@ -22,6 +32,7 @@ import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.configuration.global.ShutdownHookBehavior;
 import org.infinispan.distribution.ch.impl.SyncConsistentHashFactory;
 import org.infinispan.eviction.EvictionStrategy;
+import org.infinispan.eviction.EvictionType;
 import org.infinispan.factories.threads.DefaultThreadFactory;
 import org.infinispan.interceptors.InvocationContextInterceptor;
 import org.infinispan.interceptors.base.CommandInterceptor;
@@ -37,36 +48,73 @@ import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.lookup.JBossStandaloneJTAManagerLookup;
 import org.infinispan.util.concurrent.IsolationLevel;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
-
-import java.io.IOException;
-import java.util.List;
-import java.util.Map;
-
-import static org.infinispan.test.TestingUtil.withCacheManager;
-import static org.testng.AssertJUnit.*;
 
 @Test(groups = "unit", testName = "configuration.parsing.UnifiedXmlFileParsingTest")
 public class UnifiedXmlFileParsingTest extends AbstractInfinispanTest {
 
-   public void testParseAndConstructUnifiedXmlFile71() throws IOException {
+   @DataProvider(name = "configurationFiles")
+   public Object[][] configurationFiles() {
+      return new Object[][] { {"7.0.xml"}, {"7.1.xml"}, {"7.2.xml"}, {"8.0.xml"} };
+   }
+
+   @Test(dataProvider="configurationFiles")
+   public void testParseAndConstructUnifiedXmlFile(String config) throws IOException {
+      String[] parts = config.split("\\.");
+      int major = Integer.parseInt(parts[0]);
+      int minor = Integer.parseInt(parts[1]);
+      final int version = major * 10 + minor;
       withCacheManager(new CacheManagerCallable(
-            TestCacheManagerFactory.fromXml("configs/unified/7.1.xml", true, false)) {
+            TestCacheManagerFactory.fromXml("configs/unified/" + config, true, false)) {
          @Override
          public void call() {
-            configurationCheck70(cm);
+            switch (version) {
+               case 80:
+                  configurationCheck80(cm);
+                  break;
+               case 70:
+               case 71:
+               case 72:
+                  configurationCheck70(cm);
+                  break;
+               default:
+                  throw new IllegalArgumentException("Unknown configuration version "+version);
+            }
          }
       });
    }
 
-   public void testParseAndConstructUnifiedXmlFile70() throws IOException {
-      withCacheManager(new CacheManagerCallable(
-            TestCacheManagerFactory.fromXml("configs/unified/7.0.xml", true, false)) {
-         @Override
-         public void call() {
-            configurationCheck70(cm);
-         }
-      });
+   private static void configurationCheck80(EmbeddedCacheManager cm) {
+      configurationCheck70(cm);
+      Configuration c = cm.getCache().getCacheConfiguration();
+      assertFalse(c.eviction().type() == EvictionType.MEMORY);
+      c = cm.getCache("invalid").getCacheConfiguration();
+      assertTrue(c.eviction().type() == EvictionType.MEMORY);
+
+      DefaultThreadFactory threadFactory;
+      BlockingThreadPoolExecutorFactory threadPool;
+
+      threadFactory = cm.getCacheManagerConfiguration().asyncThreadPool().threadFactory();
+      assertEquals("infinispan", threadFactory.threadGroup().getName());
+      assertEquals("%G %i", threadFactory.threadNamePattern());
+      assertEquals(5, threadFactory.initialPriority());
+      threadPool = cm.getCacheManagerConfiguration().asyncThreadPool().threadPoolFactory();
+      assertEquals(TestCacheManagerFactory.ASYNC_EXEC_MAX_THREADS, threadPool.coreThreads()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.ASYNC_EXEC_MAX_THREADS, threadPool.maxThreads()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.ASYNC_EXEC_QUEUE_SIZE, threadPool.queueLength()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.KEEP_ALIVE, threadPool.keepAlive());  // overriden by TestCacheManagerFactory
+
+      threadFactory = cm.getCacheManagerConfiguration().stateTransferThreadPool().threadFactory();
+      assertEquals("infinispan", threadFactory.threadGroup().getName());
+      assertEquals("%G %i", threadFactory.threadNamePattern());
+      assertEquals(5, threadFactory.initialPriority());
+      threadPool = cm.getCacheManagerConfiguration().stateTransferThreadPool().threadPoolFactory();
+      assertEquals(TestCacheManagerFactory.STATE_TRANSFER_EXEC_MAX_THREADS, threadPool.coreThreads()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.STATE_TRANSFER_EXEC_MAX_THREADS, threadPool.maxThreads()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.STATE_TRANSFER_EXEC_QUEUE_SIZE, threadPool.queueLength()); //
+      // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.KEEP_ALIVE, threadPool.keepAlive());  // overriden by TestCacheManagerFactory
    }
 
    private static void configurationCheck70(EmbeddedCacheManager cm) {
@@ -87,12 +135,19 @@ public class UnifiedXmlFileParsingTest extends AbstractInfinispanTest {
       assertEquals("jgroups-tcp.xml", g.transport().properties().getProperty("stackFilePath-tcp"));
       assertEquals("tcp", g.transport().properties().getProperty("stack"));
 
-      DefaultThreadFactory threadFactory =
-            cm.getCacheManagerConfiguration().listenerThreadPool().threadFactory();
+      DefaultThreadFactory threadFactory;
+      BlockingThreadPoolExecutorFactory threadPool;
+
+      threadFactory = cm.getCacheManagerConfiguration().listenerThreadPool().threadFactory();
       assertEquals("infinispan", threadFactory.threadGroup().getName());
       assertEquals("%G %i", threadFactory.threadNamePattern());
       assertEquals(5, threadFactory.initialPriority());
-
+      threadPool = cm.getCacheManagerConfiguration().listenerThreadPool().threadPoolFactory();
+      assertEquals(1, threadPool.coreThreads());
+      assertEquals(1, threadPool.maxThreads());
+      assertEquals(0, threadPool.queueLength());
+      assertEquals(0, threadPool.keepAlive());
+      
       assertTrue(cm.getCacheManagerConfiguration().transport().totalOrderThreadPool().threadPoolFactory() instanceof CachedThreadPoolExecutorFactory);
       threadFactory = cm.getCacheManagerConfiguration().transport().totalOrderThreadPool().threadFactory();
       assertEquals("infinispan", threadFactory.threadGroup().getName());
@@ -117,25 +172,25 @@ public class UnifiedXmlFileParsingTest extends AbstractInfinispanTest {
       assertEquals("%G %i", threadFactory.threadNamePattern());
       assertEquals(5, threadFactory.initialPriority());
 
+      threadFactory = cm.getCacheManagerConfiguration().transport().remoteCommandThreadPool().threadFactory();
+      assertEquals("infinispan", threadFactory.threadGroup().getName());
+      assertEquals("%G %i", threadFactory.threadNamePattern());
+      assertEquals(5, threadFactory.initialPriority());
+      threadPool = cm.getCacheManagerConfiguration().transport().remoteCommandThreadPool().threadPoolFactory();
+      assertEquals(TestCacheManagerFactory.REMOTE_EXEC_MAX_THREADS, threadPool.coreThreads()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.REMOTE_EXEC_MAX_THREADS, threadPool.maxThreads()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.REMOTE_EXEC_QUEUE_SIZE, threadPool.queueLength()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.KEEP_ALIVE, threadPool.keepAlive());  // overriden by TestCacheManagerFactory
+
       threadFactory = cm.getCacheManagerConfiguration().transport().transportThreadPool().threadFactory();
       assertEquals("infinispan", threadFactory.threadGroup().getName());
       assertEquals("%G %i", threadFactory.threadNamePattern());
       assertEquals(5, threadFactory.initialPriority());
-      BlockingThreadPoolExecutorFactory threadPool = cm.getCacheManagerConfiguration().transport().transportThreadPool().threadPoolFactory();
-      assertEquals(6, threadPool.coreThreads()); // overriden by TestCacheManagerFactory
-      assertEquals(6, threadPool.maxThreads()); // overriden by TestCacheManagerFactory
-      assertEquals(10000, threadPool.queueLength()); // overriden by TestCacheManagerFactory
-      assertEquals(30000, threadPool.keepAlive());  // overriden by TestCacheManagerFactory
-
-      threadFactory = cm.getCacheManagerConfiguration().listenerThreadPool().threadFactory();
-      assertEquals("infinispan", threadFactory.threadGroup().getName());
-      assertEquals("%G %i", threadFactory.threadNamePattern());
-      assertEquals(5, threadFactory.initialPriority());
-      threadPool = cm.getCacheManagerConfiguration().listenerThreadPool().threadPoolFactory();
-      assertEquals(1, threadPool.coreThreads());
-      assertEquals(1, threadPool.maxThreads());
-      assertEquals(0, threadPool.queueLength());
-      assertEquals(0, threadPool.keepAlive());
+      threadPool = cm.getCacheManagerConfiguration().transport().transportThreadPool().threadPoolFactory();
+      assertEquals(TestCacheManagerFactory.TRANSPORT_EXEC_MAX_THREADS, threadPool.coreThreads()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.TRANSPORT_EXEC_MAX_THREADS, threadPool.maxThreads()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.TRANSPORT_EXEC_QUEUE_SIZE, threadPool.queueLength()); // overriden by TestCacheManagerFactory
+      assertEquals(TestCacheManagerFactory.KEEP_ALIVE, threadPool.keepAlive());  // overriden by TestCacheManagerFactory
 
       assertTrue(g.serialization().marshaller() instanceof VersionAwareMarshaller);
       assertEquals(Version.getVersionShort("1.0"), g.serialization().version());
@@ -176,9 +231,7 @@ public class UnifiedXmlFileParsingTest extends AbstractInfinispanTest {
       assertFalse(fileStore.purgeOnStartup());
       assertTrue(fileStore.preload());
       assertTrue(fileStore.shared());
-      assertEquals(2, fileStore.async().flushLockTimeout());
       assertEquals(2048, fileStore.async().modificationQueueSize());
-      assertEquals(20000, fileStore.async().shutdownTimeout());
       assertEquals(1, fileStore.async().threadPoolSize());
       assertEquals(Index.NONE, c.indexing().index());
 
@@ -187,7 +240,6 @@ public class UnifiedXmlFileParsingTest extends AbstractInfinispanTest {
       assertTrue(c.invocationBatching().enabled());
       assertEquals(10, c.clustering().async().replQueueInterval());
       assertEquals(1000, c.clustering().async().replQueueMaxElements());
-      assertTrue(c.clustering().async().asyncMarshalling());
       assertTrue(c.jmxStatistics().enabled());
       assertEquals(30500, c.locking().lockAcquisitionTimeout());
       assertEquals(2500, c.locking().concurrencyLevel());
@@ -200,7 +252,7 @@ public class UnifiedXmlFileParsingTest extends AbstractInfinispanTest {
       assertTrue(c.transaction().syncRollbackPhase()); // Non XA - side effect of cache manager creation
       assertEquals(LockingMode.OPTIMISTIC, c.transaction().lockingMode());
       assertEquals(60500, c.transaction().cacheStopTimeout());
-      assertEquals(20500, c.eviction().maxEntries());
+      assertEquals(20500, c.eviction().size());
       assertEquals(EvictionStrategy.LRU, c.eviction().strategy());
       assertEquals(10500, c.expiration().wakeUpInterval());
       assertEquals(11, c.expiration().lifespan());

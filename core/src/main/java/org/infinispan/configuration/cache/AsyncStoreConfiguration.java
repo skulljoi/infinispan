@@ -1,5 +1,9 @@
 package org.infinispan.configuration.cache;
 
+import org.infinispan.commons.configuration.attributes.Attribute;
+import org.infinispan.commons.configuration.attributes.AttributeDefinition;
+import org.infinispan.commons.configuration.attributes.AttributeSet;
+
 /**
  * Configuration for the async cache store. If enabled, this provides you with asynchronous writes
  * to the cache store, giving you 'write-behind' caching.
@@ -8,45 +12,47 @@ package org.infinispan.configuration.cache;
  *
  */
 public class AsyncStoreConfiguration {
+   public static final AttributeDefinition<Boolean> ENABLED = AttributeDefinition.builder("enabled", false).immutable().build();
+   public static final AttributeDefinition<Integer> MODIFICATION_QUEUE_SIZE  = AttributeDefinition.builder("modificationQueueSize", 1024).immutable().build();
+   public static final AttributeDefinition<Integer> THREAD_POOL_SIZE = AttributeDefinition.builder("threadPoolSize", 1).immutable().build();
 
-   private final boolean enabled;
-   private long flushLockTimeout;
-   private final int modificationQueueSize;
-   private long shutdownTimeout;
-   private final int threadPoolSize;
+   static AttributeSet attributeDefinitionSet() {
+      return new AttributeSet(AsyncStoreConfiguration.class, ENABLED, MODIFICATION_QUEUE_SIZE, THREAD_POOL_SIZE);
+   }
 
-   AsyncStoreConfiguration(boolean enabled, long flushLockTimeout, int modificationQueueSize, long shutdownTimeout,
-                           int threadPoolSize) {
-      this.enabled = enabled;
-      this.flushLockTimeout = flushLockTimeout;
-      this.modificationQueueSize = modificationQueueSize;
-      this.shutdownTimeout = shutdownTimeout;
-      this.threadPoolSize = threadPoolSize;
+   private final Attribute<Boolean> enabled;
+   private final Attribute<Integer> modificationQueueSize;
+   private final Attribute<Integer> threadPoolSize;
+
+   private final AttributeSet attributes;
+
+   AsyncStoreConfiguration(AttributeSet attributes) {
+      this.attributes = attributes.checkProtection();
+      enabled = attributes.attribute(ENABLED);
+      modificationQueueSize = attributes.attribute(MODIFICATION_QUEUE_SIZE);
+      threadPoolSize = attributes.attribute(THREAD_POOL_SIZE);
    }
 
    /**
     * If true, all modifications to this cache store happen asynchronously, on a separate thread.
     */
    public boolean enabled() {
-      return enabled;
+      return enabled.get();
    }
 
    /**
-    * Timeout to acquire the lock which guards the state to be flushed to the cache store
-    * periodically. The timeout can be adjusted for a running cache.
-    *
-    * @return
+    * Unused
     */
+   @Deprecated
    public long flushLockTimeout() {
-      return flushLockTimeout;
+      return 0;
    }
 
    /**
-    * Timeout to acquire the lock which guards the state to be flushed to the cache store
-    * periodically. The timeout can be adjusted for a running cache.
+    * Unused
     */
+   @Deprecated
    public AsyncStoreConfiguration flushLockTimeout(long l) {
-      this.flushLockTimeout = l;
       return this;
    }
 
@@ -57,20 +63,22 @@ public class AsyncStoreConfiguration {
     * elements.
     */
    public int modificationQueueSize() {
-      return modificationQueueSize;
+      return modificationQueueSize.get();
    }
 
    /**
-    * Timeout to stop the cache store. When the store is stopped it's possible that some
-    * modifications still need to be applied; you likely want to set a very large timeout to make
-    * sure to not loose data
+    * Unused
     */
+   @Deprecated
    public long shutdownTimeout() {
-      return shutdownTimeout;
+      return 0;
    }
 
+   /**
+    * Unused
+    */
+   @Deprecated
    public AsyncStoreConfiguration shutdownTimeout(long l) {
-      this.shutdownTimeout = l;
       return this;
    }
 
@@ -78,18 +86,41 @@ public class AsyncStoreConfiguration {
     * Size of the thread pool whose threads are responsible for applying the modifications.
     */
    public int threadPoolSize() {
-      return threadPoolSize;
+      return threadPoolSize.get();
+   }
+
+   public AttributeSet attributes() {
+      return attributes;
    }
 
    @Override
    public String toString() {
-      return "AsyncStoreConfiguration{" +
-            "enabled=" + enabled +
-            ", flushLockTimeout=" + flushLockTimeout +
-            ", modificationQueueSize=" + modificationQueueSize +
-            ", shutdownTimeout=" + shutdownTimeout +
-            ", threadPoolSize=" + threadPoolSize +
-            '}';
+      return "AsyncStoreConfiguration [attributes=" + attributes + "]";
+   }
+
+   @Override
+   public boolean equals(Object obj) {
+      if (this == obj)
+         return true;
+      if (obj == null)
+         return false;
+      if (getClass() != obj.getClass())
+         return false;
+      AsyncStoreConfiguration other = (AsyncStoreConfiguration) obj;
+      if (attributes == null) {
+         if (other.attributes != null)
+            return false;
+      } else if (!attributes.equals(other.attributes))
+         return false;
+      return true;
+   }
+
+   @Override
+   public int hashCode() {
+      final int prime = 31;
+      int result = 1;
+      result = prime * result + ((attributes == null) ? 0 : attributes.hashCode());
+      return result;
    }
 
 }

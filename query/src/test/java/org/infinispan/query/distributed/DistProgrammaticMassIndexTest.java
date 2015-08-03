@@ -6,7 +6,7 @@ import static org.junit.Assert.fail;
 import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.Query;
-import org.hibernate.search.infinispan.spi.InfinispanIntegration;
+import org.infinispan.hibernate.search.spi.InfinispanIntegration;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
@@ -53,19 +53,14 @@ public class DistProgrammaticMassIndexTest extends DistributedMassIndexingTest {
       }
    }
 
-   protected void verifyFindsCar(Cache cache, int count, String carMake) {
+   protected void verifyFindsCar(Cache cache, int count, String carMake) throws Exception {
       QueryParser queryParser = createQueryParser("make");
 
-      try {
-         Query luceneQuery = queryParser.parse(carMake);
-         CacheQuery cacheQuery = Search.getSearchManager(cache).getQuery(luceneQuery, Car.class);
+      Query luceneQuery = queryParser.parse(carMake);
+      CacheQuery cacheQuery = Search.getSearchManager(cache).getQuery(luceneQuery, Car.class);
 
-         assertEquals(count, cacheQuery.getResultSize());
+      assertEquals(count, cacheQuery.getResultSize());
 
-      } catch(ParseException ex) {
-         ex.printStackTrace();
-         fail("Failed due to: " + ex.getMessage());
-      }
       StaticTestingErrorHandler.assertAllGood(cache);
    }
 

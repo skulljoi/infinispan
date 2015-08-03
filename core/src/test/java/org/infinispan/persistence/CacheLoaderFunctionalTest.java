@@ -377,7 +377,8 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
       assertInCacheAndStore("k2", "v2", lifespan);
 
       tm.begin();
-      cache.clear();
+      cache.remove("k1");
+      cache.remove("k2");
       t = tm.suspend();
 
       assertInCacheAndStore("k1", "v1");
@@ -405,7 +406,8 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
       assertInCacheAndStore("k2", "v2", lifespan);
 
       tm.begin();
-      cache.clear();
+      cache.remove("k1");
+      cache.remove("k2");
       t = tm.suspend();
 
       assertInCacheAndStore("k1", "v1");
@@ -586,7 +588,7 @@ public class CacheLoaderFunctionalTest extends AbstractInfinispanTest {
       cm.defineConfiguration(cacheName, preloadingCfg);
 
       final Cache<String, String> preloadingCache = cm.getCache(cacheName);
-      final int expectedEntriesInContainer = Math.min(4, preloadingCfg.eviction().maxEntries());
+      final long expectedEntriesInContainer = Math.min(4l, preloadingCfg.eviction().maxEntries());
       AdvancedCacheLoader preloadingCacheLoader = (AdvancedCacheLoader) TestingUtil.getCacheLoader(preloadingCache);
 
       assertTrue("Preload not enabled in cache configuration",

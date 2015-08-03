@@ -6,6 +6,8 @@ import org.infinispan.commons.util.Util
 import org.infinispan.remoting.transport.Address
 import java.lang.StringBuilder
 
+import org.infinispan.server.hotrod.iteration.IterableIterationResult
+
 /**
  * A basic responses. The rest of this file contains other response types.
  *
@@ -85,6 +87,77 @@ class BulkGetKeysResponse(override val version: Byte, override val messageId: Lo
          .append(", status=").append(status)
          .append(", scope=").append(scope)
          .append("}").toString
+   }
+}
+
+class GetAllResponse(override val version: Byte, override val messageId: Long, override val cacheName: String, override val clientIntel: Short,
+                  override val operation: OperationResponse, override val status: OperationStatus,
+                  override val topologyId: Int, val entries: Map[Bytes, Bytes])
+      extends Response(version, messageId, cacheName, clientIntel, operation, status, topologyId) {
+   override def toString = {
+      new StringBuilder().append("GetAllResponse").append("{")
+         .append("version=").append(version)
+         .append(", messageId=").append(messageId)
+         .append(", operation=").append(operation)
+         .append(", status=").append(status)
+         .append(", keys=")
+         .append(entries.map {case(k, v) => (Util.printArray(k, true), Util.printArray(v, true))}.mkString("[", ",", "]"))
+         .append("}").toString
+   }
+}
+
+class IterationStartResponse(override val version: Byte,
+                             override val messageId: Long,
+                             override val cacheName: String,
+                             override val clientIntel: Short,
+                             override val topologyId: Int,
+                             val iterationId: String)
+extends Response(version, messageId, cacheName, clientIntel, IterationStartResponse, Success, topologyId) {
+   override def toString = {
+      new StringBuilder().append("IterationStartResponse").append("{")
+      .append("version=").append(version)
+      .append(", messageId=").append(messageId)
+      .append(", cacheName=").append(cacheName)
+      .append(", operation=").append(operation)
+      .append(", status=").append(status)
+      .append(", iterationId=").append(iterationId)
+      .append("}").toString
+   }
+}
+
+class IterationNextResponse(override val version: Byte,
+                             override val messageId: Long,
+                             override val cacheName: String,
+                             override val clientIntel: Short,
+                             override val topologyId: Int,
+                             val iterationResult: IterableIterationResult)
+extends Response(version, messageId, cacheName, clientIntel, IterationNextResponse, iterationResult.statusCode, topologyId) {
+   override def toString = {
+      new StringBuilder().append("IterationNextResponse").append("{")
+      .append("version=").append(version)
+      .append(", messageId=").append(messageId)
+      .append(", cacheName=").append(cacheName)
+      .append(", operation=").append(operation)
+      .append(", status=").append(status)
+      .append("}").toString
+   }
+}
+
+class IterationEndResponse(override val version: Byte,
+                           override val messageId: Long,
+                           override val cacheName: String,
+                           override val clientIntel: Short,
+                           override val topologyId: Int,
+                           val removed: Boolean)
+      extends Response(version, messageId, cacheName, clientIntel, IterationEndResponse, if (removed) Success else InvalidIteration, topologyId) {
+   override def toString = {
+      new StringBuilder().append("IterationEndResponse").append("{")
+            .append("version=").append(version)
+            .append(", messageId=").append(messageId)
+            .append(", cacheName=").append(cacheName)
+            .append(", operation=").append(operation)
+            .append(", status=").append(status)
+            .append("}").toString
    }
 }
 
@@ -207,30 +280,47 @@ class SizeResponse(override val version: Byte, override val messageId: Long, ove
    }
 }
 
-abstract class AbstractTopologyResponse(val topologyId: Int, val serverEndpointsMap : Map[Address, ServerAddress])
+class ExecResponse(override val version: Byte, override val messageId: Long, override val cacheName: String,
+        override val clientIntel: Short, override val topologyId: Int, val result: Array[Byte])
+      extends Response(version, messageId, cacheName, clientIntel, ExecResponse, Success, topologyId) {
+   override def toString: String = {
+      new StringBuilder().append("ExecResponse").append("{")
+              .append("version=").append(version)
+              .append(", messageId=").append(messageId)
+              .append(", result=").append(Util.printArray(result, true))
+              .append("}").toString
+   }
+}
+
+
+abstract class AbstractTopologyResponse(val topologyId: Int, val serverEndpointsMap : Map[Address, ServerAddress], val numSegments: Int)
 
 abstract class AbstractHashDistAwareResponse(override val topologyId: Int,
                                              override val serverEndpointsMap : Map[Address, ServerAddress],
+                                             override val numSegments: Int,
                                              val numOwners: Int, val hashFunction: Byte, val hashSpace: Int)
-        extends AbstractTopologyResponse(topologyId, serverEndpointsMap)
+        extends AbstractTopologyResponse(topologyId, serverEndpointsMap, numSegments)
 
 case class TopologyAwareResponse(override val topologyId: Int,
-                                 override val serverEndpointsMap : Map[Address, ServerAddress])
-      extends AbstractTopologyResponse(topologyId, serverEndpointsMap)
+                                 override val serverEndpointsMap : Map[Address, ServerAddress],
+                                 override val numSegments: Int)
+      extends AbstractTopologyResponse(topologyId, serverEndpointsMap, numSegments)
 
 case class HashDistAwareResponse(override val topologyId: Int,
                                  override val serverEndpointsMap : Map[Address, ServerAddress],
+                                 override val numSegments: Int,
                                  override val numOwners: Int, override val hashFunction: Byte,
                                  override val hashSpace: Int)
-        extends AbstractHashDistAwareResponse(topologyId, serverEndpointsMap, numOwners, hashFunction, hashSpace)
+        extends AbstractHashDistAwareResponse(topologyId, serverEndpointsMap, numSegments, numOwners, hashFunction, hashSpace)
 
 case class HashDistAware11Response(override val topologyId: Int,
                                    override val serverEndpointsMap : Map[Address, ServerAddress],
                                    override val numOwners: Int, override val hashFunction: Byte,
                                    override val hashSpace: Int, numVNodes: Int)
-        extends AbstractHashDistAwareResponse(topologyId, serverEndpointsMap, numOwners, hashFunction, hashSpace)
+        extends AbstractHashDistAwareResponse(topologyId, serverEndpointsMap, 0, numOwners, hashFunction, hashSpace)
 
 case class HashDistAware20Response(override val topologyId: Int,
         override val serverEndpointsMap : Map[Address, ServerAddress],
+        override val numSegments: Int,
         hashFunction: Byte)
-        extends AbstractTopologyResponse(topologyId, serverEndpointsMap)
+        extends AbstractTopologyResponse(topologyId, serverEndpointsMap, numSegments)

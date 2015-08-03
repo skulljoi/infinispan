@@ -5,6 +5,7 @@ import org.infinispan.Cache;
 import org.infinispan.cache.impl.CacheImpl;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.marshall.AbstractDelegatingMarshaller;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.commons.util.InfinispanCollections;
@@ -28,6 +29,7 @@ import org.infinispan.manager.CacheContainer;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.ExternalizerTable;
 import org.infinispan.marshall.core.MarshalledEntry;
+import org.infinispan.manager.DefaultCacheManager;
 import org.infinispan.marshall.core.MarshalledEntryImpl;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
@@ -49,11 +51,13 @@ import org.infinispan.security.impl.SecureCacheImpl;
 import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.topology.CacheTopology;
 import org.infinispan.transaction.impl.TransactionTable;
+import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.jgroups.Channel;
+import org.jgroups.View;
 import org.jgroups.protocols.DELAY;
 import org.jgroups.protocols.DISCARD;
 import org.jgroups.protocols.TP;
@@ -68,9 +72,13 @@ import javax.management.ObjectName;
 import javax.security.auth.Subject;
 import javax.transaction.Status;
 import javax.transaction.TransactionManager;
+
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.Serializable;
 import java.lang.reflect.Field;
@@ -92,6 +100,7 @@ import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
+import java.util.regex.Pattern;
 
 import static java.io.File.separator;
 import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.BOTH;
@@ -115,9 +124,11 @@ public class TestingUtil {
       START_53(5, 3),
       START_60(6, 0),
       START_70(7, 0),
-      START_71(7, 1);
+      START_71(7, 1),
+      START_72(7, 2),
+      START_80(8, 0);
 
-      public static final InfinispanStartTag LATEST = START_71;
+      public static final InfinispanStartTag LATEST = START_80;
       private final String tag;
       private final String majorMinor;
 
@@ -179,8 +190,7 @@ public class TestingUtil {
          }
          catch (Exception e) {
             if (type.equals(Object.class)) {
-               e.printStackTrace();
-               return null;
+               throw new RuntimeException(e);
             } else {
                // try with superclass!!
                type = type.getSuperclass();
@@ -282,15 +292,18 @@ public class TestingUtil {
    }
    private static void viewsTimedOut(CacheContainer[] cacheContainers) {
       int length = cacheContainers.length;
-      List<List<Address>> allViews = new ArrayList<List<Address>>(length);
+      List<View> incompleteViews = new ArrayList<>(length);
       for (int i = 0; i < length; i++) {
          EmbeddedCacheManager cm = (EmbeddedCacheManager) cacheContainers[i];
-         allViews.add(cm.getMembers());
+         if (cm.getMembers().size() != cacheContainers.length) {
+            incompleteViews.add(((JGroupsTransport) cm.getTransport()).getChannel().getView());
+            log.warnf("Manager %s has an incomplete view: %s", cm.getAddress(), cm.getMembers());
+         }
       }
 
-      throw new RuntimeException(String.format(
+      throw new TimeoutException(String.format(
          "Timed out before caches had complete views.  Expected %d members in each view.  Views are as follows: %s",
-         cacheContainers.length, allViews));
+         cacheContainers.length, incompleteViews));
    }
 
    public static void blockUntilViewsReceivedInt(Cache[] caches, long timeout) throws InterruptedException {
@@ -634,9 +647,12 @@ public class TestingUtil {
             log.warn("Problems stopping cache manager " + cm, e);
          }
       }
-      for (EmbeddedCacheManager cm : cacheManagers) {
+      // Stop the managers in reverse order to prevent each of them from becoming coordinator in turn
+      for (int i = cacheManagers.length - 1; i >= 0; i--) {
+         EmbeddedCacheManager cm = cacheManagers[i];
          try {
-            if (cm != null) cm.stop();
+            if (cm != null)
+               cm.stop();
          } catch (Throwable e) {
             log.warn("Problems killing cache manager " + cm, e);
          }
@@ -685,14 +701,18 @@ public class TestingUtil {
 
       for (String cacheName : cacheContainer.getCacheNames()) {
          if (cacheContainer.isRunning(cacheName)) {
-            Cache c = cacheContainer.getCache(cacheName);
-            if (c.getStatus().allowInvocations()) running.add(c);
+            Cache c = cacheContainer.getCache(cacheName, false);
+            if (c != null && c.getStatus().allowInvocations()) {
+               running.add(c);
+            }
          }
       }
 
       if (cacheContainer.isDefaultRunning()) {
-         Cache defaultCache = cacheContainer.getCache();
-         if (defaultCache.getStatus().allowInvocations()) running.add(defaultCache);
+         Cache defaultCache = cacheContainer.getCache(EmbeddedCacheManager.DEFAULT_CACHE_NAME, false);
+         if (defaultCache != null && defaultCache.getStatus().allowInvocations()) {
+            running.add(defaultCache);
+         }
       }
 
       return running;
@@ -703,6 +723,7 @@ public class TestingUtil {
          TransactionManager txm = TestingUtil.getTransactionManager(cache);
          if (txm == null) return;
          try {
+            if (txm.getTransaction() == null) return;
             txm.rollback();
          }
          catch (Exception e) {
@@ -837,13 +858,12 @@ public class TestingUtil {
     * @return component registry
     */
    public static ComponentRegistry extractComponentRegistry(Cache cache) {
-      ComponentRegistry cr = (ComponentRegistry) extractField(cache, "componentRegistry");
-      if (cr == null) cr = cache.getAdvancedCache().getComponentRegistry();
+      ComponentRegistry cr = cache.getAdvancedCache().getComponentRegistry();
       return cr;
    }
 
    public static GlobalComponentRegistry extractGlobalComponentRegistry(CacheContainer cacheContainer) {
-      return (GlobalComponentRegistry) extractField(cacheContainer, "globalComponentRegistry");
+      return ((EmbeddedCacheManager) cacheContainer).getGlobalComponentRegistry();
    }
 
    public static LockManager extractLockManager(Cache cache) {
@@ -1320,6 +1340,10 @@ public class TestingUtil {
    public static void withCacheManager(CacheManagerCallable c) {
       try {
          c.call();
+      } catch (RuntimeException e) {
+         throw e;
+      } catch (Exception e) {
+         throw new RuntimeException(e);
       } finally {
          TestingUtil.killCacheManagers(c.clearBeforeKill(), c.cm);
       }
@@ -1335,6 +1359,10 @@ public class TestingUtil {
    public static void withCacheManagers(MultiCacheManagerCallable c) {
       try {
          c.call();
+      } catch (RuntimeException e) {
+         throw e;
+      } catch (Exception e) {
+         throw new RuntimeException(e);
       } finally {
          TestingUtil.killCacheManagers(c.cms);
       }
@@ -1456,6 +1484,16 @@ public class TestingUtil {
       return new Subject(true, set, InfinispanCollections.emptySet(), InfinispanCollections.emptySet());
    }
 
+	public static String loadFileAsString(InputStream is) throws IOException {
+		StringBuilder sb = new StringBuilder();
+		BufferedReader r = new BufferedReader(new InputStreamReader(is));
+		for (String line = r.readLine(); line != null; line = r.readLine()) {
+			sb.append(line);
+			sb.append("\n");
+		}
+		return sb.toString();
+	}
+
    static public void assertAnyEquals(Object expected, Object actual) {
       if (expected instanceof byte[] && actual instanceof byte[])
          AssertJUnit.assertArrayEquals((byte[]) expected, (byte[]) actual);
@@ -1533,6 +1571,23 @@ public class TestingUtil {
 
    public static interface WrapFactory<T, W, C> {
       W wrap(C wrapOn, T current);
+   }
+
+   public static void expectCause(Throwable t, Class<? extends Throwable> c, String messageRegex) throws Exception {
+      for (;;) {
+         if (c.isAssignableFrom(t.getClass())) {
+            if (messageRegex != null && !Pattern.matches(messageRegex, t.getMessage())) {
+               throw new RuntimeException(String.format("Exception message '%s' does not match regex '%s'", t.getMessage(), messageRegex));
+            }
+            return;
+         }
+         Throwable cause = t.getCause();
+         if (cause == null || cause == t) {
+            throw new RuntimeException("Cannot find a cause of type " + c.getName(), cause);
+         } else {
+            t = cause;
+         }
+      }
    }
 
 }

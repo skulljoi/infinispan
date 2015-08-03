@@ -93,7 +93,7 @@ public class JGroupsConfigBuilder {
          removeFailureDetection(jgroupsCfg);
 
       if (!flags.isSiteIndexSpecified()) {
-         removeRela2(jgroupsCfg);
+         removeRelay2(jgroupsCfg);
       } else {
          ProtocolConfiguration protocol = jgroupsCfg.getProtocol(RELAY2);
          protocol.getProperties().put("site", flags.siteName());
@@ -129,7 +129,7 @@ public class JGroupsConfigBuilder {
          removeMerge(jgroupsCfg);
 
       if (!flags.isSiteIndexSpecified()) {
-         removeRela2(jgroupsCfg);
+         removeRelay2(jgroupsCfg);
       }
 
       if (jgroupsCfg.containsProtocol(TEST_PING)) {
@@ -149,7 +149,7 @@ public class JGroupsConfigBuilder {
             .removeProtocol(VERIFY_SUSPECT);
    }
 
-   private static void removeRela2(JGroupsProtocolCfg jgroupsCfg) {
+   private static void removeRelay2(JGroupsProtocolCfg jgroupsCfg) {
       jgroupsCfg.removeProtocol(RELAY2);
    }
 
@@ -161,7 +161,10 @@ public class JGroupsConfigBuilder {
    }
 
    private static String replaceMCastAddressAndPort(JGroupsProtocolCfg jgroupsCfg) {
-      Map<String, String> props = jgroupsCfg.getProtocol(UDP).getProperties();
+      ProtocolConfiguration udp = jgroupsCfg.getProtocol(UDP);
+      if (udp == null) return jgroupsCfg.toString();
+
+      Map<String, String> props = udp.getProperties();
       props.put("mcast_addr", threadMcastIP.get());
       props.put("mcast_port", threadMcastPort.get().toString());
       return replaceProperties(jgroupsCfg, props, UDP);
@@ -287,8 +290,8 @@ public class JGroupsConfigBuilder {
    }
 
    enum ProtocolType {
-      TCP, UDP,
-      MPING, PING, TCPPING, TEST_PING,
+      TCP, UDP, SHARED_LOOPBACK,
+      MPING, PING, TCPPING, TEST_PING, SHARED_LOOPBACK_PING,
       MERGE2, MERGE3,
       FD_SOCK, FD, VERIFY_SUSPECT, FD_ALL, FD_ALL2,
       BARRIER,

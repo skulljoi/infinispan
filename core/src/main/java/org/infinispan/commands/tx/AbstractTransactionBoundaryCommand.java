@@ -75,7 +75,7 @@ public abstract class AbstractTransactionBoundaryCommand implements TransactionB
     * Returning a null usually means the transactional command succeeded.
     * @return return value to respond to a remote caller with if the transaction context is invalid.
     */
-   protected Object invalidRemoteTxReturnValue() {     //todo [anistor] no longer used
+   protected Object invalidRemoteTxReturnValue() {
       return null;
    }
 

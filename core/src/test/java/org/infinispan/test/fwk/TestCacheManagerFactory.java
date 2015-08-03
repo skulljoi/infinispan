@@ -12,7 +12,6 @@ import javax.xml.stream.XMLStreamException;
 
 import org.infinispan.commons.executors.BlockingThreadPoolExecutorFactory;
 import org.infinispan.commons.marshall.Marshaller;
-import org.infinispan.commons.util.FileLookup;
 import org.infinispan.commons.util.FileLookupFactory;
 import org.infinispan.commons.util.LegacyKeySupportSystemProperties;
 import org.infinispan.commons.util.Util;
@@ -42,10 +41,14 @@ import org.infinispan.util.logging.LogFactory;
  */
 public class TestCacheManagerFactory {
 
-   public static final int MAX_ASYNC_EXEC_THREADS = 6;
+   public static final int ASYNC_EXEC_MAX_THREADS = 4;
    public static final int ASYNC_EXEC_QUEUE_SIZE = 10000;
-   public static final int MAX_REQ_EXEC_THREADS = 6;
-   public static final int REQ_EXEC_QUEUE_SIZE = 0;
+   public static final int REMOTE_EXEC_MAX_THREADS = 6;
+   public static final int REMOTE_EXEC_QUEUE_SIZE = 0;
+   public static final int STATE_TRANSFER_EXEC_MAX_THREADS = 4;
+   public static final int STATE_TRANSFER_EXEC_QUEUE_SIZE = 0;
+   public static final int TRANSPORT_EXEC_MAX_THREADS = 6;
+   public static final int TRANSPORT_EXEC_QUEUE_SIZE = 10000;
    public static final int KEEP_ALIVE = 30000;
 
    public static final String MARSHALLER = LegacyKeySupportSystemProperties.getProperty("infinispan.test.marshaller.class", "infinispan.marshaller.class");
@@ -104,6 +107,10 @@ public class TestCacheManagerFactory {
       ParserRegistry parserRegistry = new ParserRegistry(Thread.currentThread().getContextClassLoader(), defaultParsersOnly);
       ConfigurationBuilderHolder holder = parserRegistry.parse(is);
       return createClusteredCacheManager(holder, keepJmxDomainName);
+   }
+
+   public static EmbeddedCacheManager fromString(String config) throws IOException {
+      return fromStream(new ByteArrayInputStream(config.getBytes()));
    }
 
    private static void markAsTransactional(boolean transactional, ConfigurationBuilder builder) {
@@ -331,13 +338,24 @@ public class TestCacheManagerFactory {
    }
 
    public static void minimizeThreads(GlobalConfigurationBuilder builder) {
-      BlockingThreadPoolExecutorFactory executorFactory = new BlockingThreadPoolExecutorFactory(
-            MAX_ASYNC_EXEC_THREADS, MAX_ASYNC_EXEC_THREADS, ASYNC_EXEC_QUEUE_SIZE, KEEP_ALIVE);
-      builder.transport().transportThreadPool().threadPoolFactory(executorFactory);
+      BlockingThreadPoolExecutorFactory executorFactory;
+
+      executorFactory = new BlockingThreadPoolExecutorFactory(ASYNC_EXEC_MAX_THREADS,
+            ASYNC_EXEC_MAX_THREADS, ASYNC_EXEC_QUEUE_SIZE, KEEP_ALIVE);
+      builder.asyncThreadPool().threadPoolFactory(executorFactory);
+
+      executorFactory = new BlockingThreadPoolExecutorFactory(STATE_TRANSFER_EXEC_MAX_THREADS,
+            STATE_TRANSFER_EXEC_MAX_THREADS, STATE_TRANSFER_EXEC_QUEUE_SIZE, KEEP_ALIVE);
+      builder.stateTransferThreadPool().threadPoolFactory(executorFactory);
+
+      executorFactory = new BlockingThreadPoolExecutorFactory(REMOTE_EXEC_MAX_THREADS,
+            REMOTE_EXEC_MAX_THREADS, REMOTE_EXEC_QUEUE_SIZE, KEEP_ALIVE);
+      builder.transport().remoteCommandThreadPool().threadPoolFactory(executorFactory);
 
       executorFactory = new BlockingThreadPoolExecutorFactory(
-            MAX_REQ_EXEC_THREADS, MAX_REQ_EXEC_THREADS, REQ_EXEC_QUEUE_SIZE, KEEP_ALIVE);
-      builder.transport().remoteCommandThreadPool().threadPoolFactory(executorFactory);
+            TRANSPORT_EXEC_MAX_THREADS, TRANSPORT_EXEC_MAX_THREADS, TRANSPORT_EXEC_QUEUE_SIZE, KEEP_ALIVE);
+      builder.transport().transportThreadPool().threadPoolFactory(executorFactory);
+
    }
 
    public static void amendMarshaller(GlobalConfigurationBuilder builder) {
@@ -380,4 +398,5 @@ public class TestCacheManagerFactory {
 
       return holder;
    }
+
 }

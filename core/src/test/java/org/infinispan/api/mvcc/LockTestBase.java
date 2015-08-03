@@ -3,7 +3,6 @@ package org.infinispan.api.mvcc;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.InvocationContextContainer;
-import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.manager.CacheContainer;
 import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.TestingUtil;
@@ -30,7 +29,6 @@ import java.util.Collections;
 public abstract class LockTestBase extends AbstractInfinispanTest {
    private Log log = LogFactory.getLog(LockTestBase.class);
    protected boolean repeatableRead = true;
-   protected boolean lockParentForChildInsertRemove = false;
    private CacheContainer cm;
 
    protected static final class LockTestBaseTL {
@@ -93,8 +91,7 @@ public abstract class LockTestBase extends AbstractInfinispanTest {
       cache.put("k", "v");
       assert tm.getTransaction().runPrepare();
       assertLocked("k");
-      tm.getTransaction().runCommitTx();
-      tm.suspend();
+      tm.getTransaction().runCommit(false);
 
       assertNoLocks();
 
@@ -109,7 +106,7 @@ public abstract class LockTestBase extends AbstractInfinispanTest {
       cache.remove("k");
       assert tm.getTransaction().runPrepare();
       assertLocked("k");
-      tm.getTransaction().runCommitTx();
+      tm.getTransaction().runCommit(false);
 
       assertNoLocks();
    }
@@ -124,9 +121,8 @@ public abstract class LockTestBase extends AbstractInfinispanTest {
       final DummyTransaction tx = ((DummyTransactionManager) tm).getTransaction();
       assert tx.runPrepare();
       assertLocked("k");
-      tx.runCommitTx();
+      tx.runCommit(false);
       assertNoLocks();
-      tm.suspend();
 
       tm.begin();
       assert "v".equals(cache.get("k"));
@@ -163,7 +159,7 @@ public abstract class LockTestBase extends AbstractInfinispanTest {
       cache.remove("k");
       tm.getTransaction().runPrepare();
       assertLocked("k");
-      tm.getTransaction().runCommitTx();
+      tm.getTransaction().runCommit(false);
 
       assert !cache.containsKey("k") : "Should not exist";
       assertNoLocks();
@@ -196,12 +192,13 @@ public abstract class LockTestBase extends AbstractInfinispanTest {
 
       // remove
       tm.begin();
-      cache.clear();
+      cache.remove("k");
+      cache.remove("k2");
       assert tm.getTransaction().runPrepare();
 
       assertLocked("k");
       assertLocked("k2");
-      tm.getTransaction().runCommitTx();
+      tm.getTransaction().runCommit(false);
 
       assert cache.isEmpty();
       assertNoLocks();
@@ -317,7 +314,7 @@ public abstract class LockTestBase extends AbstractInfinispanTest {
 
       tm.rollback();
       tm.resume(transaction);
-      transaction.runCommitTx();
+      transaction.runCommit(false);
 
       assertNoLocks();
    }

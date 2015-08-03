@@ -2,6 +2,8 @@ package org.infinispan.notifications.cachelistener.filter;
 
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.commons.util.Util;
+import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.factories.annotations.Inject;
 import org.infinispan.filter.Converter;
 import org.infinispan.marshall.core.Ids;
 import org.infinispan.metadata.Metadata;
@@ -9,7 +11,6 @@ import org.infinispan.metadata.Metadata;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
-import java.io.Serializable;
 import java.util.Set;
 
 /**
@@ -18,7 +19,7 @@ import java.util.Set;
  * @author wburns
  * @since 7.0
  */
-public class ConverterAsCacheEventConverter<K, V, C> implements CacheEventConverter<K, V, C>, Serializable {
+public class ConverterAsCacheEventConverter<K, V, C> implements CacheEventConverter<K, V, C> {
    private final Converter<K, V, C> converter;
 
    public ConverterAsCacheEventConverter(Converter<K, V, C> converter) {
@@ -28,6 +29,11 @@ public class ConverterAsCacheEventConverter<K, V, C> implements CacheEventConver
    @Override
    public C convert(K key, V oldValue, Metadata oldMetadata, V newValue, Metadata newMetadata, EventType eventType) {
       return converter.convert(key, newValue, newMetadata);
+   }
+
+   @Inject
+   protected void injectDependencies(ComponentRegistry cr) {
+      cr.wireDependencies(converter);
    }
 
    public static class Externalizer extends AbstractExternalizer<ConverterAsCacheEventConverter> {

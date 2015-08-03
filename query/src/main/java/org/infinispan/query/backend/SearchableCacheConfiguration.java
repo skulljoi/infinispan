@@ -16,12 +16,13 @@ import org.hibernate.search.engine.spi.SearchMappingHelper;
 import org.hibernate.search.engine.service.classloading.impl.DefaultClassLoaderService;
 import org.hibernate.search.engine.service.classloading.spi.ClassLoaderService;
 import org.hibernate.search.engine.service.spi.Service;
-import org.hibernate.search.infinispan.spi.CacheManagerService;
+import org.hibernate.search.store.DirectoryProvider;
+import org.infinispan.hibernate.search.spi.CacheManagerService;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
 
 /**
- * Class that implements {@link org.hibernate.search.cfg.SearchConfiguration} so that within Infinispan-Query, there is
+ * Class that implements {@link org.hibernate.search.cfg.spi.SearchConfiguration} so that within Infinispan-Query, there is
  * no need for a Hibernate Core configuration object.
  *
  * @author Navin Surtani

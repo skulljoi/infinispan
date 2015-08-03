@@ -24,6 +24,7 @@ import java.net.SocketAddress;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -56,6 +57,20 @@ public class Codec20 implements Codec, HotRodConstants {
       writeNamedFactory(transport, clientListener.converterFactoryName(), converterFactoryParams);
    }
 
+   @Override
+   public void writeExpirationParams(Transport transport, long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit) {
+      if (!CodecUtils.isIntCompatible(lifespan)) {
+         log.warn("Lifespan value greater than the max supported size (Integer.MAX_VALUE), this can cause precision loss");
+      }
+      if (!CodecUtils.isIntCompatible(maxIdle)) {
+         log.warn("MaxIdle value greater than the max supported size (Integer.MAX_VALUE), this can cause precision loss");
+      }
+      int lifespanSeconds = CodecUtils.toSeconds(lifespan, lifespanTimeUnit);
+      int maxIdleSeconds = CodecUtils.toSeconds(maxIdle, maxIdleTimeUnit);
+      transport.writeVInt(lifespanSeconds);
+      transport.writeVInt(maxIdleSeconds);
+   }
+
    private void writeNamedFactory(Transport transport, String factoryName, byte[][] params) {
       transport.writeString(factoryName);
       if (!factoryName.isEmpty()) {
@@ -83,8 +98,8 @@ public class Codec20 implements Codec, HotRodConstants {
       transport.writeVInt(params.topologyId.get());
 
       if (trace)
-         getLog().tracef("Wrote header for message %d. Operation code: %#04x. Flags: %#x",
-            params.messageId, params.opCode, joinedFlags);
+         getLog().tracef("Wrote header for messageId=%d to %s. Operation code: %#04x. Flags: %#x",
+            params.messageId, transport, params.opCode, joinedFlags);
 
       return params;
    }
@@ -273,7 +288,7 @@ public class Codec20 implements Codec, HotRodConstants {
       }
 
       if (trace)
-         localLog.tracef("Received response for message id: %d", receivedMessageId);
+         localLog.tracef("Received response for messageId=%d", receivedMessageId);
 
       return receivedMessageId;
    }
@@ -322,7 +337,7 @@ public class Codec20 implements Codec, HotRodConstants {
             }
             case HotRodConstants.ILLEGAL_LIFECYCLE_STATE:
                msgFromServer = transport.readString();
-               throw new RemoteIllegalLifecycleStateException(msgFromServer, params.messageId, status);
+               throw new RemoteIllegalLifecycleStateException(msgFromServer, params.messageId, status, transport.getRemoteSocketAddress());
             case HotRodConstants.NODE_SUSPECTED:
                // Handle both Infinispan's and JGroups' suspicions
                msgFromServer = transport.readString();
@@ -373,12 +388,14 @@ public class Codec20 implements Codec, HotRodConstants {
       short hashFunctionVersion = transport.readByte();
       int numSegments = transport.readVInt();
       SocketAddress[][] segmentOwners = new SocketAddress[numSegments][];
-      for (int i = 0; i < numSegments; i++) {
-         short numOwners = transport.readByte();
-         segmentOwners[i] = new SocketAddress[numOwners];
-         for (int j = 0; j < numOwners; j++) {
-            int memberIndex = transport.readVInt();
-            segmentOwners[i][j] = addresses[memberIndex];
+      if (hashFunctionVersion > 0) {
+         for (int i = 0; i < numSegments; i++) {
+            short numOwners = transport.readByte();
+            segmentOwners[i] = new SocketAddress[numOwners];
+            for (int j = 0; j < numOwners; j++) {
+               int memberIndex = transport.readVInt();
+               segmentOwners[i][j] = addresses[memberIndex];
+            }
          }
       }
 
@@ -387,13 +404,16 @@ public class Codec20 implements Codec, HotRodConstants {
          localLog.newTopology(transport.getRemoteSocketAddress(), newTopologyId,
                addresses.length, new HashSet<SocketAddress>(addressList));
       }
-      transport.getTransportFactory().updateServers(addressList, cacheName);
+      transport.getTransportFactory().updateServers(addressList, cacheName, false);
       if (hashFunctionVersion == 0) {
          if (trace)
             localLog.trace("Not using a consistent hash function (hash function version == 0).");
       } else {
-         transport.getTransportFactory().updateHashFunction(segmentOwners, numSegments, hashFunctionVersion, cacheName);
+         if (trace)
+            localLog.tracef("Updating client hash function with %s number of segments", numSegments);
+
       }
+      transport.getTransportFactory().updateHashFunction(segmentOwners, numSegments, hashFunctionVersion, cacheName);
    }
 
 }

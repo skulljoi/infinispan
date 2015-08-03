@@ -23,7 +23,7 @@ public class LoaderResource extends BaseLoaderResource {
             new SimpleAttributeDefinitionBuilder(ModelKeys.CLASS, ModelType.STRING, false)
                     .setXmlName(Attribute.CLASS.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .build();
 
     static final AttributeDefinition[] LOADER_ATTRIBUTES = {CLASS};
@@ -34,28 +34,14 @@ public class LoaderResource extends BaseLoaderResource {
                    .build();
 
     // operations
-    private static final OperationDefinition LOADER_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, InfinispanExtension.getResourceDescriptionResolver(ModelKeys.LOADER))
+    private static final OperationDefinition LOADER_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, new InfinispanResourceDescriptionResolver(ModelKeys.LOADER))
         .setParameters(COMMON_LOADER_PARAMETERS)
         .addParameter(CLASS)
-        .setAttributeResolver(InfinispanExtension.getResourceDescriptionResolver(ModelKeys.LOADER))
+        .setAttributeResolver(new InfinispanResourceDescriptionResolver(ModelKeys.LOADER))
         .build();
 
-    public LoaderResource() {
-        super(LOADER_PATH,
-                InfinispanExtension.getResourceDescriptionResolver(ModelKeys.LOADER),
-                CacheConfigOperationHandlers.LOADER_ADD,
-                ReloadRequiredRemoveStepHandler.INSTANCE);
-    }
-
-    @Override
-    public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        super.registerAttributes(resourceRegistration);
-
-        // check that we don't need a special handler here?
-        final OperationStepHandler writeHandler = new ReloadRequiredWriteAttributeHandler(LOADER_ATTRIBUTES);
-        for (AttributeDefinition attr : LOADER_ATTRIBUTES) {
-            resourceRegistration.registerReadWriteAttribute(attr, null, writeHandler);
-        }
+    public LoaderResource(CacheResource cacheResource) {
+        super(LOADER_PATH, ModelKeys.LOADER, cacheResource, LOADER_ATTRIBUTES);
     }
 
     @Override

@@ -47,14 +47,14 @@ public class LevelDBStoreResource extends BaseStoreResource {
             new SimpleAttributeDefinitionBuilder(ModelKeys.PATH, ModelType.STRING, true)
                     .setXmlName(Attribute.PATH.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .build();
 
     static final SimpleAttributeDefinition RELATIVE_TO =
             new SimpleAttributeDefinitionBuilder(ModelKeys.RELATIVE_TO, ModelType.STRING, true)
                     .setXmlName(Attribute.RELATIVE_TO.getLocalName())
                     .setAllowExpression(false)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(ServerEnvironment.SERVER_DATA_DIR))
                     .build();
 
@@ -62,7 +62,7 @@ public class LevelDBStoreResource extends BaseStoreResource {
             new SimpleAttributeDefinitionBuilder(ModelKeys.BLOCK_SIZE, ModelType.INT, true)
                     .setXmlName(Attribute.BLOCK_SIZE.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(0))
                     .build();
 
@@ -70,7 +70,7 @@ public class LevelDBStoreResource extends BaseStoreResource {
             new SimpleAttributeDefinitionBuilder(ModelKeys.CACHE_SIZE, ModelType.LONG, true)
                     .setXmlName(Attribute.CACHE_SIZE.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(0))
                     .build();
 
@@ -78,7 +78,7 @@ public class LevelDBStoreResource extends BaseStoreResource {
             new SimpleAttributeDefinitionBuilder(ModelKeys.CLEAR_THRESHOLD, ModelType.INT, true)
                     .setXmlName(Attribute.CLEAR_THRESHOLD.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(10000))
                     .build();
 
@@ -90,34 +90,20 @@ public class LevelDBStoreResource extends BaseStoreResource {
                     .build();
 
     // operations
-    private static final OperationDefinition LEVELDB_STORE_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, InfinispanExtension.getResourceDescriptionResolver(ModelKeys.LEVELDB_STORE))
+    private static final OperationDefinition LEVELDB_STORE_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, new InfinispanResourceDescriptionResolver(ModelKeys.LEVELDB_STORE))
         .setParameters(COMMON_STORE_PARAMETERS)
         .addParameter(PATH)
         .addParameter(BLOCK_SIZE)
         .addParameter(CACHE_SIZE)
         .addParameter(CLEAR_THRESHOLD)
-        .setAttributeResolver(InfinispanExtension.getResourceDescriptionResolver(ModelKeys.LEVELDB_STORE))
+        .setAttributeResolver(new InfinispanResourceDescriptionResolver(ModelKeys.LEVELDB_STORE))
         .build();
 
     private final ResolvePathHandler resolvePathHandler;
 
-    public LevelDBStoreResource(final ResolvePathHandler resolvePathHandler) {
-        super(LEVELDB_STORE_PATH,
-                InfinispanExtension.getResourceDescriptionResolver(ModelKeys.LEVELDB_STORE),
-                CacheConfigOperationHandlers.LEVELDB_STORE_ADD,
-                ReloadRequiredRemoveStepHandler.INSTANCE);
+    public LevelDBStoreResource(CacheResource cacheResource, final ResolvePathHandler resolvePathHandler) {
+        super(LEVELDB_STORE_PATH, ModelKeys.LEVELDB_STORE, cacheResource, LEVELDB_STORE_ATTRIBUTES);
         this.resolvePathHandler = resolvePathHandler;
-    }
-
-    @Override
-    public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        super.registerAttributes(resourceRegistration);
-
-        // check that we don't need a special handler here?
-        final OperationStepHandler writeHandler = new ReloadRequiredWriteAttributeHandler(LEVELDB_STORE_ATTRIBUTES);
-        for (AttributeDefinition attr : LEVELDB_STORE_ATTRIBUTES) {
-            resourceRegistration.registerReadWriteAttribute(attr, null, writeHandler);
-        }
     }
 
     @Override
@@ -138,9 +124,9 @@ public class LevelDBStoreResource extends BaseStoreResource {
     public void registerChildren(ManagementResourceRegistration resourceRegistration) {
         super.registerChildren(resourceRegistration);
         // child resources
-        resourceRegistration.registerSubModel(new LevelDBExpirationResource());
-        resourceRegistration.registerSubModel(new LevelDBCompressionResource());
-        resourceRegistration.registerSubModel(new LevelDBImplementationResource());
+        resourceRegistration.registerSubModel(new LevelDBExpirationResource(cacheResource));
+        resourceRegistration.registerSubModel(new LevelDBCompressionResource(cacheResource));
+        resourceRegistration.registerSubModel(new LevelDBImplementationResource(cacheResource));
     }
 
 }

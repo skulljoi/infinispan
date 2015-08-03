@@ -23,6 +23,7 @@ package org.jboss.as.clustering.infinispan.subsystem;
 
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.ADD;
 
+import org.infinispan.commons.util.Util;
 import org.jboss.as.controller.*;
 import org.jboss.as.controller.descriptions.ResourceDescriptionResolver;
 import org.jboss.as.controller.registry.AttributeAccess;
@@ -35,6 +36,7 @@ import org.jboss.dmr.ModelType;
  * Base class for store resources which require common store attributes only.
  *
  * @author Richard Achmatowicz (c) 2011 Red Hat Inc.
+ * @author Tristan Tarrant
  */
 public class BaseStoreResource extends BaseLoaderResource {
 
@@ -43,35 +45,35 @@ public class BaseStoreResource extends BaseLoaderResource {
             new SimpleAttributeDefinitionBuilder(ModelKeys.FETCH_STATE, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.FETCH_STATE.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(true))
                     .build();
     static final SimpleAttributeDefinition PASSIVATION =
             new SimpleAttributeDefinitionBuilder(ModelKeys.PASSIVATION, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.PASSIVATION.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(true))
                     .build();
     static final SimpleAttributeDefinition PURGE =
             new SimpleAttributeDefinitionBuilder(ModelKeys.PURGE, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.PURGE.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(true))
                     .build();
     static final SimpleAttributeDefinition READ_ONLY =
             new SimpleAttributeDefinitionBuilder(ModelKeys.READ_ONLY, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.READ_ONLY.getLocalName())
                     .setAllowExpression(false)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(false))
                     .build();
     static final SimpleAttributeDefinition SINGLETON =
             new SimpleAttributeDefinitionBuilder(ModelKeys.SINGLETON, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.SINGLETON.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(false))
                     .build();
 
@@ -80,23 +82,12 @@ public class BaseStoreResource extends BaseLoaderResource {
     static final AttributeDefinition[] COMMON_STORE_PARAMETERS = {SHARED, PRELOAD, PASSIVATION, FETCH_STATE, PURGE, READ_ONLY, SINGLETON, PROPERTIES};
 
     // operations
-    private static final OperationDefinition CACHE_STORE_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, InfinispanExtension.getResourceDescriptionResolver(ModelKeys.STORE))
+    private static final OperationDefinition CACHE_STORE_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, new InfinispanResourceDescriptionResolver(ModelKeys.STORE))
         .setParameters(COMMON_STORE_PARAMETERS)
         .build();
 
-    public BaseStoreResource(PathElement pathElement, ResourceDescriptionResolver descriptionResolver, OperationStepHandler addHandler, OperationStepHandler removeHandler) {
-        super(pathElement, descriptionResolver, addHandler, removeHandler);
-    }
-
-    @Override
-    public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        super.registerAttributes(resourceRegistration);
-
-        // check that we don't need a special handler here?
-        final OperationStepHandler writeHandler = new ReloadRequiredWriteAttributeHandler(COMMON_STORE_ATTRIBUTES);
-        for (AttributeDefinition attr : COMMON_STORE_ATTRIBUTES) {
-            resourceRegistration.registerReadWriteAttribute(attr, null, writeHandler);
-        }
+    public BaseStoreResource(PathElement path, String resourceKey, CacheResource cacheResource, AttributeDefinition[] attributes) {
+        super(path, resourceKey, cacheResource, Util.arrayConcat(COMMON_STORE_ATTRIBUTES,  attributes));
     }
 
     @Override

@@ -15,7 +15,6 @@ import org.infinispan.context.impl.NonTxInvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
-import org.infinispan.iteration.impl.EntryRetriever;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.notifications.cachelistener.cluster.ClusterEventManager;
@@ -33,9 +32,7 @@ import java.util.List;
 
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
-import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @Test(testName = "notifications.cachelistener.OnlyPrimaryOwnerTest", groups = "unit")
 public class OnlyPrimaryOwnerTest {
@@ -59,12 +56,12 @@ public class OnlyPrimaryOwnerTest {
       };
       when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class))).then(answer);
       when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class), anyString())).then(answer);
-      n.injectDependencies(mockCache, cdl, null, config, mock(DistributionManager.class), mock(EntryRetriever.class),
+      n.injectDependencies(mockCache, cdl, null, config, mock(DistributionManager.class),
                            mock(InternalEntryFactory.class), mock(ClusterEventManager.class));
       cl = new PrimaryOwnerCacheListener();
       n.start();
       n.addListener(cl);
-      ctx = new NonTxInvocationContext(AnyEquivalence.getInstance());
+      ctx = new NonTxInvocationContext(null, AnyEquivalence.getInstance());
    }
 
    private static class MockCDL implements ClusteringDependentLogic {

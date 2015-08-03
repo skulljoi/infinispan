@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <infinispan
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="urn:infinispan:config:7.1 http://www.infinispan.org/schemas/infinispan-config-7.1.xsd"
-        xmlns="urn:infinispan:config:7.1">
+        xsi:schemaLocation="urn:infinispan:config:8.0 http://www.infinispan.org/schemas/infinispan-config-8.0.xsd"
+        xmlns="urn:infinispan:config:8.0">
 
     <jgroups>
         <stack-file name="udp" path="default-configs/default-jgroups-udp.xml"/>
@@ -18,7 +18,7 @@
             <store-as-binary/>
             <state-transfer enabled="false" timeout="240000" chunk-size="10000"/>
         </replicated-cache>
-        <replicated-cache name="asyncCache" async-marshalling="true" mode="ASYNC"/>
+        <replicated-cache name="asyncCache" mode="ASYNC"/>
     </cache-container>
 
 </infinispan>

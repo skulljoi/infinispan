@@ -1,6 +1,7 @@
 package org.infinispan.objectfilter.impl.hql;
 
 import org.antlr.runtime.tree.Tree;
+import org.hibernate.hql.ast.TypeDescriptor;
 import org.hibernate.hql.ast.common.JoinType;
 import org.hibernate.hql.ast.origin.hql.resolve.path.PathedPropertyReference;
 import org.hibernate.hql.ast.origin.hql.resolve.path.PathedPropertyReferenceSource;
@@ -57,6 +58,11 @@ public final class FilterQueryResolverDelegate implements QueryResolverDelegate 
    }
 
    @Override
+   public void registerJoinAlias(Tree alias, PropertyPath path) {
+      throw new UnsupportedOperationException("Not implemented");
+   }
+
+   @Override
    public boolean isUnqualifiedPropertyReference() {
       return true;
    }
@@ -97,7 +103,6 @@ public final class FilterQueryResolverDelegate implements QueryResolverDelegate 
 
    @Override
    public PathedPropertyReferenceSource normalizePropertyPathIntermediary(PropertyPath path, Tree propertyName) {
-
       FilterTypeDescriptor sourceType = (FilterTypeDescriptor) path.getLastNode().getType();
 
       if (!sourceType.hasProperty(propertyName.getText())) {
@@ -106,7 +111,6 @@ public final class FilterQueryResolverDelegate implements QueryResolverDelegate 
 
       List<String> newPath = new LinkedList<String>(path.getNodeNamesWithoutAlias());
       newPath.add(propertyName.getText());
-
       return new PathedPropertyReference(propertyName.getText(), new FilterEmbeddedEntityTypeDescriptor(sourceType.getEntityType(), newPath, propertyHelper), false);
    }
 
@@ -136,13 +140,16 @@ public final class FilterQueryResolverDelegate implements QueryResolverDelegate 
          throw log.getNoSuchPropertyException(type.toString(), propertyName);
       }
 
-      if (type.hasEmbeddedProperty(propertyName)) {
-         List<String> newPath = new LinkedList<String>(path);
-         newPath.add(propertyName);
-         return new PathedPropertyReference(propertyName, new FilterEmbeddedEntityTypeDescriptor(type.getEntityType(), newPath, propertyHelper), false);
-      }
+      List<String> newPath = new LinkedList<String>(path);
+      newPath.add(propertyName);
 
-      return new PathedPropertyReference(propertyName, new FilterPropertyTypeDescriptor(), false);
+      TypeDescriptor propType;
+      if (type.hasEmbeddedProperty(propertyName)) {
+         propType = new FilterEmbeddedEntityTypeDescriptor(type.getEntityType(), newPath, propertyHelper);
+      } else {
+         propType = new FilterPropertyTypeDescriptor();
+      }
+      return new PathedPropertyReference(propertyName, propType, false);
    }
 
    @Override

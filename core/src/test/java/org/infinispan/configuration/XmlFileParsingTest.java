@@ -1,7 +1,6 @@
 package org.infinispan.configuration;
 
 import org.infinispan.Version;
-import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.equivalence.AnyEquivalence;
 import org.infinispan.commons.equivalence.ByteArrayEquivalence;
 import org.infinispan.commons.executors.BlockingThreadPoolExecutorFactory;
@@ -321,15 +320,29 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             cm.getCacheManagerConfiguration().persistenceThreadPool().threadFactory();
       assertEquals("PersistenceThread", persistenceThreadFactory.threadNamePattern());
 
+      BlockingThreadPoolExecutorFactory asyncThreadPool =
+            cm.getCacheManagerConfiguration().asyncThreadPool().threadPoolFactory();
+      assertEquals(TestCacheManagerFactory.ASYNC_EXEC_MAX_THREADS, asyncThreadPool.maxThreads());
+      assertEquals(TestCacheManagerFactory.ASYNC_EXEC_QUEUE_SIZE, asyncThreadPool.queueLength());
+      assertEquals(TestCacheManagerFactory.KEEP_ALIVE, asyncThreadPool.keepAlive());
+
       BlockingThreadPoolExecutorFactory transportThreadPool =
             cm.getCacheManagerConfiguration().transport().transportThreadPool().threadPoolFactory();
-      assertEquals(TestCacheManagerFactory.MAX_ASYNC_EXEC_THREADS, transportThreadPool.maxThreads());
-      assertEquals(TestCacheManagerFactory.ASYNC_EXEC_QUEUE_SIZE, transportThreadPool.queueLength());
+      assertEquals(TestCacheManagerFactory.TRANSPORT_EXEC_MAX_THREADS, transportThreadPool.maxThreads());
+      assertEquals(TestCacheManagerFactory.TRANSPORT_EXEC_QUEUE_SIZE, transportThreadPool.queueLength());
+      assertEquals(TestCacheManagerFactory.KEEP_ALIVE, transportThreadPool.keepAlive());
 
       BlockingThreadPoolExecutorFactory remoteCommandThreadPool =
             cm.getCacheManagerConfiguration().transport().remoteCommandThreadPool().threadPoolFactory();
-      assertEquals(TestCacheManagerFactory.MAX_REQ_EXEC_THREADS, remoteCommandThreadPool.maxThreads());
+      assertEquals(TestCacheManagerFactory.REMOTE_EXEC_MAX_THREADS, remoteCommandThreadPool.maxThreads());
+      assertEquals(TestCacheManagerFactory.REMOTE_EXEC_QUEUE_SIZE, remoteCommandThreadPool.queueLength());
       assertEquals(TestCacheManagerFactory.KEEP_ALIVE, remoteCommandThreadPool.keepAlive());
+
+      BlockingThreadPoolExecutorFactory stateTransferThreadPool =
+            cm.getCacheManagerConfiguration().stateTransferThreadPool().threadPoolFactory();
+      assertEquals(TestCacheManagerFactory.STATE_TRANSFER_EXEC_MAX_THREADS, stateTransferThreadPool.maxThreads());
+      assertEquals(TestCacheManagerFactory.STATE_TRANSFER_EXEC_QUEUE_SIZE, stateTransferThreadPool.queueLength());
+      assertEquals(TestCacheManagerFactory.KEEP_ALIVE, stateTransferThreadPool.keepAlive());
 
       BlockingThreadPoolExecutorFactory totalOrderThreadPool =
             cm.getCacheManagerConfiguration().transport().totalOrderThreadPool().threadPoolFactory();
@@ -343,7 +356,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
 
       DefaultThreadFactory evictionThreadFactory =
             cm.getCacheManagerConfiguration().evictionThreadPool().threadFactory();
-      assertEquals("EvictionThread", evictionThreadFactory.threadNamePattern());
+      assertEquals("ExpirationThread", evictionThreadFactory.threadNamePattern());
 
       DefaultThreadFactory replicationQueueThreadFactory =
             cm.getCacheManagerConfiguration().replicationQueueThreadPool().threadFactory();
@@ -398,14 +411,12 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       c = cm.getCacheConfiguration("syncInval");
 
       assertEquals(CacheMode.INVALIDATION_SYNC, c.clustering().cacheMode());
-      assertTrue(!c.clustering().stateTransfer().fetchInMemoryState());
       assertTrue(c.clustering().stateTransfer().awaitInitialTransfer());
       assertEquals(15000, c.clustering().sync().replTimeout());
 
       c = cm.getCacheConfiguration("asyncInval");
 
       assertEquals(CacheMode.INVALIDATION_ASYNC, c.clustering().cacheMode());
-      assertTrue(!c.clustering().stateTransfer().fetchInMemoryState());
       assertEquals(15000, c.clustering().sync().replTimeout());
 
       c = cm.getCacheConfiguration("syncRepl");
@@ -462,7 +473,6 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertTrue(loaderCfg.purgeOnStartup());
       assertEquals("/tmp/FileCacheStore-Location", loaderCfg.location());
       assertEquals(5, loaderCfg.async().threadPoolSize());
-      assertEquals(15000, loaderCfg.async().flushLockTimeout());
       assertTrue(loaderCfg.async().enabled());
       assertEquals(700, loaderCfg.async().modificationQueueSize());
 

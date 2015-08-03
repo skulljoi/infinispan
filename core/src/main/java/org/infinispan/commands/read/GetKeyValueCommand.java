@@ -55,6 +55,7 @@ public class GetKeyValueCommand extends AbstractDataCommand implements RemoteFet
          }
          return null;
       }
+
       return entry.getValue();
    }
 

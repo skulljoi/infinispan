@@ -101,6 +101,18 @@ public class HeaderParams {
             return HotRodConstants.REMOVE_CLIENT_LISTENER_RESPONSE;
          case HotRodConstants.SIZE_REQUEST:
             return HotRodConstants.SIZE_RESPONSE;
+         case HotRodConstants.EXEC_REQUEST:
+            return HotRodConstants.EXEC_RESPONSE;
+         case HotRodConstants.PUT_ALL_REQUEST:
+            return HotRodConstants.PUT_ALL_RESPONSE;
+         case HotRodConstants.GET_ALL_REQUEST:
+            return HotRodConstants.GET_ALL_RESPONSE;
+         case HotRodConstants.ITERATION_START_REQUEST:
+            return HotRodConstants.ITERATION_START_RESPONSE;
+         case HotRodConstants.ITERATION_NEXT_REQUEST:
+            return HotRodConstants.ITERATION_NEXT_RESPONSE;
+         case HotRodConstants.ITERATION_END_REQUEST:
+            return HotRodConstants.ITERATION_END_RESPONSE;
          default:
             throw new IllegalStateException("Unknown operation code: " + opCode);
       }

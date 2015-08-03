@@ -233,7 +233,9 @@
                 </c:simple-property>
                 <c:simple-property name="virtual-server" required="false"
                                    description="The virtual server on which the REST connector should be published"/>
-            </resource-configuration>
+                <c:simple-property name="virtual-host" required="false"
+                                   description="The virtual host on which the REST connector should be published"/>
+           </resource-configuration>
         </service>
     </service>
 
@@ -289,6 +291,8 @@
                     dataType="trait" description="The names of the members of the cluster"/>
             <metric property="coordinatorAddress" displayName="Coordinator Address" displayType="summary" units="none"
                     dataType="trait" description="The coordinator node's address"/>
+            <metric property="isCoordinator" displayName="Is coordinator?" displayType="summary" units="none"
+                    dataType="trait" description="Indicates whether this node is coordinator"/>
             <metric property="localAddress" displayName="Local Address" displayType="summary" units="none"
                     dataType="trait" description="The local node's address"/>
             <metric property="version" displayName="Version" displayType="summary" units="none"
@@ -322,6 +326,8 @@
                 </c:simple-property>
                 <c:simple-property name="listener-executor" required="false" type="string" readOnly="true"
                                    description="The executor used for the replication queue"/>
+                <c:simple-property name="async-executor" required="false" type="string" readOnly="true"
+                                   description="The executor used for async cache operations"/>
                 <c:simple-property name="eviction-executor" required="false" type="string" readOnly="true"
                                    description="The scheduled executor used for eviction"/>
                 <c:simple-property name="module" required="false" type="string" readOnly="true"
@@ -329,6 +335,8 @@
                                    description="The module whose class loader should be used when building this cache container&apos;s configuration. The default value is org.jboss.as.clustering.infinispan."/>
                 <c:simple-property name="replication-queue-executor" required="false" type="string" readOnly="true"
                                    description="The executor used for asynchronous cache operations"/>
+                <c:simple-property name="state-transfer-executor" required="false" type="string" readOnly="true"
+                                   description="The executor used for state transfer application"/>
             </resource-configuration>
 
             <service name="Cache" discovery="org.rhq.modules.plugins.jbossas7.SubsystemDiscovery"
@@ -550,14 +558,10 @@
                         <c:simple-property name="remote-timeout" required="false" type="long" readOnly="true"
                                            default="17500"
                                            description="In SYNC mode, the timeout (in ms) used to wait for an acknowledgment when making a remote call, after which the call is aborted and an exception is thrown."/>
-                        <c:simple-property name="async-marshalling" required="false" type="boolean" readOnly="true"
-                                           defaultValue="false"
-                                           description="If enabled, this will cause marshalling of entries to be performed asynchronously. The default value is false."/>
                         <c:simple-property name="cache-availability" required="false" type="string" readOnly="false" default="AVAILABLE" description="The availability status of the cache.">
                             <c:property-options>
                                 <c:option value="AVAILABLE"/>
                                 <c:option value="DEGRADED_MODE"/>
-                                <c:option value="UNAVAILABLE"/>
                             </c:property-options>
                         </c:simple-property>
                     </c:group>

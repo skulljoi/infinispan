@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.infinispan</groupId>
         <artifactId>infinispan-parent</artifactId>
-        <version>7.1.1-SNAPSHOT</version>
+        <version>8.0.0-SNAPSHOT</version>
         <relativePath>../../parent/pom.xml</relativePath>
     </parent>
 
@@ -65,7 +65,7 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.wildfly</groupId>
+            <groupId>org.wildfly.arquillian</groupId>
             <artifactId>wildfly-arquillian-container-managed</artifactId>
             <scope>test</scope>
         </dependency>
@@ -125,6 +125,7 @@
                             <goal>unpack</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <artifactItems>
                                 <artifactItem>
                                     <groupId>org.wildfly</groupId>
@@ -180,8 +181,12 @@
                         </goals>
                         <phase>generate-resources</phase>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <target>
-                               <ant antfile="build.xml" target="create_distro" />
+                               <ant antfile="../../server/integration/src/main/ant/infinispan-server.xml" target="create-distro">
+                                   <property name="server.build.dist" value="${server.build.dist}" />
+                                   <property name="server.dist" value="${server.dist}" />
+                               </ant>
                             </target>
                         </configuration>
                     </execution>
@@ -192,8 +197,16 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <target>
-                               <ant antfile="build.xml" target="start_server" />
+                               <ant antfile="../../server/integration/src/main/ant/infinispan-server.xml" target="start-server">
+                                   <property name="server.dist" value="${server.dist}" />
+                                   <property name="port.offset" value="0" />
+                                   <property name="management.port" value="9990" />
+                                   <property name="hotrod.port" value="11222" />
+                                   <property name="jboss.node.name" value="ispn-server" />
+                                   <property name="jboss.config.file" value="standalone.xml" />
+                               </ant>
                             </target>
                         </configuration>
                     </execution>
@@ -204,8 +217,11 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <target>
-                               <ant antfile="build.xml" target="kill_server" />
+                               <ant antfile="../../server/integration/src/main/ant/infinispan-server.xml" target="kill-server">
+                                   <property name="hotrod.port" value="11222" />
+                               </ant>
                             </target>
                         </configuration>
                     </execution>
@@ -226,9 +242,7 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-failsafe-plugin</artifactId>
                         <configuration>
-                            <groups combine.self="override">org.infinispan.test.integration.as.category.UnstableTest
-                            </groups>
-                            
+                            <groups combine.self="override">org.infinispan.test.integration.as.category.UnstableTest</groups>
                             <excludedGroups combine.self="override" />
                         </configuration>
                     </plugin>
@@ -236,5 +250,4 @@
             </build>
         </profile>
     </profiles>
-
 </project>

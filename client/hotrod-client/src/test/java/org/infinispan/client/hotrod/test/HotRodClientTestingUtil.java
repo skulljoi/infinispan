@@ -5,11 +5,12 @@ import org.infinispan.Cache;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
+import org.infinispan.client.hotrod.test.InternalRemoteCacheManager;
+import org.infinispan.client.hotrod.impl.protocol.HotRodConstants;
 import org.infinispan.client.hotrod.impl.transport.tcp.FailoverRequestBalancingStrategy;
 import org.infinispan.client.hotrod.impl.transport.tcp.TcpTransportFactory;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller;
-import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.commons.util.Util;
 import org.infinispan.container.versioning.NumericVersion;
 import org.infinispan.manager.EmbeddedCacheManager;
@@ -23,11 +24,11 @@ import org.infinispan.util.logging.LogFactory;
 import java.io.IOException;
 import java.net.BindException;
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.util.Collection;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.infinispan.distribution.DistributionTestHelper.getFirstOwner;
 import static org.infinispan.distribution.DistributionTestHelper.isFirstOwner;
 
 /**
@@ -173,7 +174,7 @@ public class HotRodClientTestingUtil {
       return ((NumericVersion) meta.version()).getVersion();
    }
 
-   private static byte[] toBytes(Object key) {
+   public static byte[] toBytes(Object key) {
       try {
          return new GenericJBossMarshaller().objectToByteBuffer(key);
       } catch (Exception e) {
@@ -194,7 +195,7 @@ public class HotRodClientTestingUtil {
       builder.addServer()
             .host(server.getHost())
             .port(server.getPort());
-      return new RemoteCacheManager(builder.build());
+      return new InternalRemoteCacheManager(builder.build());
 
    }
 
@@ -203,15 +204,23 @@ public class HotRodClientTestingUtil {
    }
 
    public static byte[] getKeyForServer(HotRodServer primaryOwner, String cacheName) {
+      GenericJBossMarshaller marshaller = new GenericJBossMarshaller();
       Cache<?, ?> cache = cacheName != null
             ? primaryOwner.getCacheManager().getCache(cacheName)
             : primaryOwner.getCacheManager().getCache();
       Random r = new Random();
       byte[] dummy = new byte[8];
       int attemptsLeft = 1000;
-      do {
-         r.nextBytes(dummy);
-      } while (!isFirstOwner(cache, dummy) && attemptsLeft >= 0);
+      try {
+         do {
+            r.nextBytes(dummy);
+            attemptsLeft--;
+         } while (!isFirstOwner(cache, marshaller.objectToByteBuffer(dummy)) && attemptsLeft >= 0);
+      } catch (IOException e) {
+         throw new AssertionError(e);
+      } catch (InterruptedException e) {
+         throw new AssertionError(e);
+      }
 
       if (attemptsLeft < 0)
          throw new IllegalStateException("Could not find any key owned by " + primaryOwner);
@@ -239,6 +248,7 @@ public class HotRodClientTestingUtil {
       do {
          dummyInt = r.nextInt();
          dummy = toBytes(dummyInt);
+         attemptsLeft--;
       } while (!isFirstOwner(cache, dummy) && attemptsLeft >= 0);
 
       if (attemptsLeft < 0)
@@ -251,10 +261,54 @@ public class HotRodClientTestingUtil {
       return dummyInt;
    }
 
-   public static <T extends FailoverRequestBalancingStrategy> T getLoadBalancer(RemoteCacheManager client) {
-      TcpTransportFactory transportFactory = TestingUtil.extractField(client, "transportFactory");
-      return (T) transportFactory.getBalancer(RemoteCacheManager.cacheNameBytes());
+   /**
+    * Get a split-personality key, whose POJO version hashes to the primary
+    * owner passed in, but it's binary version does not.
+    */
+   public static Integer getSplitIntKeyForServer(HotRodServer primaryOwner, HotRodServer binaryOwner, String cacheName) {
+      Cache<?, ?> cache = cacheName != null
+            ? primaryOwner.getCacheManager().getCache(cacheName)
+            : primaryOwner.getCacheManager().getCache();
+
+      Cache<?, ?> binaryOwnerCache = cacheName != null
+            ? binaryOwner.getCacheManager().getCache(cacheName)
+            : binaryOwner.getCacheManager().getCache();
+
+      Random r = new Random();
+      byte[] dummy;
+      Integer dummyInt;
+      int attemptsLeft = 1000;
+      boolean primaryOwnerFound = false;
+      boolean binaryOwnerFound = false;
+      do {
+         dummyInt = r.nextInt();
+         dummy = toBytes(dummyInt);
+         attemptsLeft--;
+         primaryOwnerFound = isFirstOwner(cache, dummyInt);
+         binaryOwnerFound = isFirstOwner(binaryOwnerCache, dummy);
+      } while (!(primaryOwnerFound && binaryOwnerFound) && attemptsLeft >= 0);
+
+      if (attemptsLeft < 0)
+         throw new IllegalStateException("Could not find any key owned by " + primaryOwner);
+
+      log.infof("Integer key [pojo=%s,bytes=%s] hashes to [cluster=%s,hotrod=%s], but the binary version's owner is [cluster=%s,hotrod=%s]",
+            Util.toHexString(dummy), dummyInt,
+            primaryOwner.getCacheManager().getAddress(), primaryOwner.getAddress(),
+            binaryOwner.getCacheManager().getAddress(), binaryOwner.getAddress());
+
+      return dummyInt;
    }
+
+   public static <T extends FailoverRequestBalancingStrategy> T getLoadBalancer(RemoteCacheManager client) {
+      TcpTransportFactory transportFactory = null;
+      if (client instanceof InternalRemoteCacheManager) {
+         transportFactory = (TcpTransportFactory) ((InternalRemoteCacheManager) client).getTransportFactory();
+      } else {
+         transportFactory = TestingUtil.extractField(client, "transportFactory");
+      }
+      return (T) transportFactory.getBalancer(HotRodConstants.DEFAULT_CACHE_NAME_BYTES);
+   }
+
 
    public static void findServerAndKill(RemoteCacheManager client,
          Collection<HotRodServer> servers, Collection<EmbeddedCacheManager> cacheManagers) {

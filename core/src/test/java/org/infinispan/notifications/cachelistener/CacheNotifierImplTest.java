@@ -9,7 +9,6 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.NonTxInvocationContext;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
-import org.infinispan.iteration.impl.EntryRetriever;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.notifications.cachelistener.cluster.ClusterEventManager;
 import org.infinispan.notifications.cachelistener.event.*;
@@ -52,12 +51,12 @@ public class CacheNotifierImplTest extends AbstractInfinispanTest {
       when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class))).then(answer);
       when(mockCache.getAdvancedCache().getComponentRegistry().getComponent(any(Class.class), anyString())).then(answer);
       n.injectDependencies(mockCache, new ClusteringDependentLogic.LocalLogic(), null, config,
-                           mock(DistributionManager.class), mock(EntryRetriever.class), mock(InternalEntryFactory.class),
+                           mock(DistributionManager.class), mock(InternalEntryFactory.class),
                            mock(ClusterEventManager.class));
       cl = new CacheListener();
       n.start();
       n.addListener(cl);
-      ctx = new NonTxInvocationContext(AnyEquivalence.getInstance());
+      ctx = new NonTxInvocationContext(null, AnyEquivalence.getInstance());
    }
 
    public void testNotifyCacheEntryCreated() {

@@ -34,11 +34,14 @@ import java.util.Set;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 
+import org.infinispan.server.jgroups.subsystem.ChannelResourceDefinition;
+import org.infinispan.server.jgroups.subsystem.JGroupsSubsystemResourceDefinition;
 import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.descriptions.ModelDescriptionConstants;
 import org.jboss.as.controller.operations.common.Util;
 import org.jboss.as.controller.parsing.ParseUtils;
 import org.jboss.dmr.ModelNode;
+import org.jboss.logging.Logger;
 import org.jboss.staxmapper.XMLElementReader;
 import org.jboss.staxmapper.XMLExtendedStreamReader;
 
@@ -51,6 +54,8 @@ import org.jboss.staxmapper.XMLExtendedStreamReader;
  * @author Radoslav Husar
  */
 public final class InfinispanSubsystemXMLReader_5_3 implements XMLElementReader<List<ModelNode>> {
+    private static final Logger log = Logger.getLogger(InfinispanSubsystemXMLReader_5_3.class);
+    public static final XMLElementReader<List<ModelNode>> INSTANCE = new InfinispanSubsystemXMLReader_5_3();
 
     /**
      * {@inheritDoc}
@@ -180,16 +185,19 @@ public final class InfinispanSubsystemXMLReader_5_3 implements XMLElementReader<
         PathAddress transportAddress = containerAddress.append(ModelKeys.TRANSPORT, ModelKeys.TRANSPORT_NAME);
         ModelNode transport = Util.createAddOperation(transportAddress);
 
+        String cluster = null;
+        String stack = null;
+
         for (int i = 0; i < reader.getAttributeCount(); i++) {
             String value = reader.getAttributeValue(i);
             Attribute attribute = Attribute.forName(reader.getAttributeLocalName(i));
             switch (attribute) {
                 case STACK: {
-                    TransportResource.STACK.parseAndSetParameter(value, transport, reader);
+                    stack = value;
                     break;
                 }
                 case CLUSTER: {
-                    TransportResource.CLUSTER.parseAndSetParameter(value, transport, reader);
+                    cluster = value;
                     break;
                 }
                 case EXECUTOR: {
@@ -205,6 +213,16 @@ public final class InfinispanSubsystemXMLReader_5_3 implements XMLElementReader<
                 }
             }
         }
+
+        String channel = (cluster != null) ? cluster : ("cluster-" + containerAddress.getLastElement().getValue());
+        TransportResource.CHANNEL.parseAndSetParameter(channel, transport, reader);
+        PathAddress channelAddress = PathAddress.pathAddress(JGroupsSubsystemResourceDefinition.PATH, ChannelResourceDefinition.pathElement(channel));
+        ModelNode channelOperation = Util.createAddOperation(channelAddress);
+        if (stack != null) {
+            ChannelResourceDefinition.STACK.parseAndSetParameter(stack, channelOperation, reader);
+        }
+        operations.add(channelOperation);
+
         ParseUtils.requireNoContent(reader);
 
         operations.add(transport);
@@ -241,7 +259,7 @@ public final class InfinispanSubsystemXMLReader_5_3 implements XMLElementReader<
     private void parseClusteredCacheAttribute(XMLExtendedStreamReader reader, int index, Attribute attribute, String value, ModelNode cache) throws XMLStreamException {
         switch (attribute) {
             case ASYNC_MARSHALLING: {
-                ClusteredCacheResource.ASYNC_MARSHALLING.parseAndSetParameter(value, cache, reader);
+                log.warn("The async-marshalling attribute has been deprecated and has no effect, please update your configuration file.");
                 break;
             }
             case MODE: {

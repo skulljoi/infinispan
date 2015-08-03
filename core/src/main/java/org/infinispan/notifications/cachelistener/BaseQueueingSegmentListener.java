@@ -1,7 +1,6 @@
 package org.infinispan.notifications.cachelistener;
 
 import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.container.entries.ImmortalCacheEntry;
 import org.infinispan.notifications.cachelistener.event.Event;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -74,7 +73,7 @@ abstract class BaseQueueingSegmentListener<K, V, E extends Event<K, V>> implemen
    }
 
    @Override
-   public void segmentTransferred(int segment, boolean sentLastEntry) {
+   public void segmentCompleted(Set<Integer> segments) {
    }
 
    protected boolean addEvent(K key, Object value) {

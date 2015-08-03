@@ -23,7 +23,7 @@ import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.Test;
 
-@Test(groups = "functional", testName="cli-server.InterpreterTest")
+@Test(groups = "functional", testName="cli.interpreter.InterpreterTest")
 public class InterpreterTest extends SingleCacheManagerTest {
 
    @Override
@@ -130,6 +130,16 @@ public class InterpreterTest extends SingleCacheManagerTest {
       assertEquals("b", b);
       interpreter.execute(sessionId, "remove 'b' 'c';");
       assertTrue(cache.containsKey("b"));
+   }
+
+   public void testEvict() throws Exception {
+      Interpreter interpreter = getInterpreter();
+      String sessionId = interpreter.createSessionId(BasicCacheContainer.DEFAULT_CACHE_NAME);
+      interpreter.execute(sessionId, "put 'a' 'a';");
+      Object a = cache.get("a");
+      assertEquals("a", a);
+      interpreter.execute(sessionId, "evict 'a';");
+      assertFalse(cache.containsKey("a"));
    }
 
    public void testReplace() throws Exception {

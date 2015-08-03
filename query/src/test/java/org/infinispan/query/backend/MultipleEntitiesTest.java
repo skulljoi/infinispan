@@ -1,12 +1,15 @@
 package org.infinispan.query.backend;
 
+import java.util.Date;
+
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.hibernate.search.annotations.Field;
 import org.hibernate.search.annotations.Indexed;
+import org.hibernate.search.backend.IndexWorkVisitor;
 import org.hibernate.search.backend.impl.lucene.LuceneBackendQueueProcessor;
 import org.hibernate.search.backend.impl.lucene.LuceneBackendResources;
-import org.hibernate.search.backend.impl.lucene.works.ByTermUpdateWorkDelegate;
-import org.hibernate.search.backend.impl.lucene.works.LuceneWorkVisitor;
+import org.hibernate.search.backend.impl.lucene.works.ByTermUpdateWorkExecutor;
+import org.hibernate.search.backend.impl.lucene.works.LuceneWorkExecutor;
 import org.hibernate.search.indexes.spi.DirectoryBasedIndexManager;
 import org.hibernate.search.spi.SearchIntegrator;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
@@ -19,8 +22,6 @@ import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Test;
-
-import java.util.Date;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
@@ -47,13 +48,13 @@ public class MultipleEntitiesTest extends SingleCacheManagerTest {
       SearchManager searchManager = Search.getSearchManager(cache);
 
       cache.put(123405, new Bond(new Date(System.currentTimeMillis()), 450L));
-      assertEfficientIndexingUsed(searchManager.getSearchFactory(), Bond.class);
+      assertEfficientIndexingUsed(searchManager.unwrap(SearchIntegrator.class), Bond.class);
 
       cache.put(123502, new Debenture("GB", 116d));
-      assertEfficientIndexingUsed(searchManager.getSearchFactory(), Debenture.class);
+      assertEfficientIndexingUsed(searchManager.unwrap(SearchIntegrator.class), Debenture.class);
 
       cache.put(223456, new Bond(new Date(System.currentTimeMillis()), 550L));
-      assertEfficientIndexingUsed(searchManager.getSearchFactory(), Bond.class);
+      assertEfficientIndexingUsed(searchManager.unwrap(SearchIntegrator.class), Bond.class);
 
       CacheQuery query = searchManager.getQuery(new MatchAllDocsQuery(), Bond.class, Debenture.class);
       assertEquals(query.list().size(), 3);
@@ -69,8 +70,8 @@ public class MultipleEntitiesTest extends SingleCacheManagerTest {
       DirectoryBasedIndexManager im = (DirectoryBasedIndexManager) searchIntegrator.getIndexBinding(clazz).getIndexManagers()[0];
       LuceneBackendQueueProcessor bqp = (LuceneBackendQueueProcessor) im.getBackendQueueProcessor();
       LuceneBackendResources indexResources = bqp.getIndexResources();
-      LuceneWorkVisitor visitor = indexResources.getVisitor();
-      assertTrue(TestingUtil.extractField(visitor, "updateDelegate") instanceof ByTermUpdateWorkDelegate);
+      IndexWorkVisitor<Void, LuceneWorkExecutor> visitor = indexResources.getWorkVisitor();
+      assertTrue(TestingUtil.extractField(visitor, "updateDelegate") instanceof ByTermUpdateWorkExecutor);
    }
 }
 

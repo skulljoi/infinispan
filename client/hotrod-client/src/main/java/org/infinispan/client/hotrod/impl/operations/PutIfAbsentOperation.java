@@ -1,5 +1,6 @@
 package org.infinispan.client.hotrod.impl.operations;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import net.jcip.annotations.Immutable;
@@ -26,8 +27,8 @@ public class PutIfAbsentOperation extends AbstractKeyValueOperation<byte[]> {
 
    public PutIfAbsentOperation(Codec codec, TransportFactory transportFactory,
                                byte[] key, byte[] cacheName, AtomicInteger topologyId,
-                               Flag[] flags, byte[] value, int lifespan, int maxIdle) {
-      super(codec, transportFactory, key, cacheName, topologyId, flags, value, lifespan, maxIdle);
+                               Flag[] flags, byte[] value, long lifespan,TimeUnit lifespanTimeUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
+      super(codec, transportFactory, key, cacheName, topologyId, flags, value, lifespan, lifespanTimeUnit, maxIdleTime, maxIdleTimeUnit);
    }
 
    @Override

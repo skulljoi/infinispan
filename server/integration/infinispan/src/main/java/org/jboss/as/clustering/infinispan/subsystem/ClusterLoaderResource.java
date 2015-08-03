@@ -29,7 +29,7 @@ public class ClusterLoaderResource extends BaseLoaderResource {
             new SimpleAttributeDefinitionBuilder(ModelKeys.REMOTE_TIMEOUT, ModelType.LONG, true)
                     .setXmlName(Attribute.REMOTE_TIMEOUT.getLocalName())
                     .setAllowExpression(false)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(15000L))
                     .build();
 
@@ -41,28 +41,14 @@ public class ClusterLoaderResource extends BaseLoaderResource {
                    .build();
 
     // operations
-    private static final OperationDefinition CLUSTER_LOADER_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, InfinispanExtension.getResourceDescriptionResolver(ModelKeys.CLUSTER_LOADER))
+    private static final OperationDefinition CLUSTER_LOADER_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, new InfinispanResourceDescriptionResolver(ModelKeys.CLUSTER_LOADER))
         .setParameters(COMMON_LOADER_PARAMETERS)
         .addParameter(REMOTE_TIMEOUT)
-        .setAttributeResolver(InfinispanExtension.getResourceDescriptionResolver(ModelKeys.CLUSTER_LOADER))
+        .setAttributeResolver(new InfinispanResourceDescriptionResolver(ModelKeys.CLUSTER_LOADER))
         .build();
 
-    public ClusterLoaderResource() {
-        super(CLUSTER_LOADER_PATH,
-                InfinispanExtension.getResourceDescriptionResolver(ModelKeys.CLUSTER_LOADER),
-                CacheConfigOperationHandlers.CLUSTER_LOADER_ADD,
-                ReloadRequiredRemoveStepHandler.INSTANCE);
-    }
-
-    @Override
-    public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        super.registerAttributes(resourceRegistration);
-
-        // check that we don't need a special handler here?
-        final OperationStepHandler writeHandler = new ReloadRequiredWriteAttributeHandler(CLUSTER_LOADER_ATTRIBUTES);
-        for (AttributeDefinition attr : CLUSTER_LOADER_ATTRIBUTES) {
-            resourceRegistration.registerReadWriteAttribute(attr, null, writeHandler);
-        }
+    public ClusterLoaderResource(CacheResource cacheResource) {
+        super(CLUSTER_LOADER_PATH, ModelKeys.CLUSTER_LOADER, cacheResource, CLUSTER_LOADER_ATTRIBUTES);
     }
 
     @Override

@@ -1,30 +1,31 @@
 package org.infinispan.persistence.support;
 
+import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertFalse;
+
+import java.util.concurrent.locks.ReentrantLock;
+
 import org.infinispan.Cache;
 import org.infinispan.commons.configuration.BuiltBy;
 import org.infinispan.commons.configuration.ConfigurationFor;
+import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.configuration.cache.AsyncStoreConfiguration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
 import org.infinispan.configuration.cache.SingletonStoreConfiguration;
 import org.infinispan.eviction.EvictionStrategy;
+import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.persistence.dummy.DummyInMemoryStore;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfiguration;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
-import org.infinispan.marshall.core.MarshalledEntry;
+import org.infinispan.test.AbstractInfinispanTest;
 import org.infinispan.test.CacheManagerCallable;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Test;
 
-import java.util.Properties;
-import java.util.concurrent.locks.ReentrantLock;
-
-import static org.testng.AssertJUnit.assertEquals;
-import static org.testng.AssertJUnit.assertFalse;
-
 @Test(groups = "unit", testName = "persistence.decorators.AsyncStoreEvictionTest")
-public class AsyncStoreEvictionTest {
+public class AsyncStoreEvictionTest extends AbstractInfinispanTest {
 
    // set to false to fix all the tests
    private static final boolean USE_ASYNC_STORE = true;
@@ -52,8 +53,7 @@ public class AsyncStoreEvictionTest {
 
       @Override
       public LockableStoreConfiguration create() {
-         return new LockableStoreConfiguration(purgeOnStartup, fetchPersistentState, ignoreModifications,
-                                                          async.create(), singletonStore.create(), preload, shared, properties, debug, slow, storeName, failKey);
+         return new LockableStoreConfiguration(attributes.protect(), async.create(), singletonStore.create());
       }
    }
 
@@ -61,8 +61,8 @@ public class AsyncStoreEvictionTest {
    @BuiltBy(LockableStoreConfigurationBuilder.class)
    public static class LockableStoreConfiguration extends DummyInMemoryStoreConfiguration {
 
-      public LockableStoreConfiguration(boolean purgeOnStartup, boolean fetchPersistentState, boolean ignoreModifications, AsyncStoreConfiguration async, SingletonStoreConfiguration singletonStore, boolean preload, boolean shared, Properties properties, boolean debug, boolean slow, String storeName, Object failKey) {
-         super(purgeOnStartup, fetchPersistentState, ignoreModifications, async, singletonStore, preload, shared, properties, debug, slow, storeName, failKey);
+      public LockableStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async, SingletonStoreConfiguration singletonStore) {
+         super(attributes, async, singletonStore);
       }
    }
 
@@ -146,9 +146,12 @@ public class AsyncStoreEvictionTest {
             cache.put("k1", "v0");
             cache.put("k2", "v2"); // force eviction of "k1"
 
-            // wait for k1 == v1 to appear in store
-            while (store.load("k1") == null)
-               TestingUtil.sleepThread(10);
+            eventually(new Condition() {
+               @Override
+               public boolean isSatisfied() throws Exception {
+                  return store.load("k1") != null;
+               }
+            });
 
             // simulate slow back end store
             store.lock.lock();
@@ -180,9 +183,12 @@ public class AsyncStoreEvictionTest {
             cache.put("k1", "v1");
             cache.put("k2", "v2"); // force eviction of "k1"
 
-            // wait for "k1" to appear in store
-            while (store.load("k1") == null)
-               TestingUtil.sleepThread(10);
+            eventually(new Condition() {
+               @Override
+               public boolean isSatisfied() throws Exception {
+                  return store.load("k1") != null;
+               }
+            });
 
             // simulate slow back end store
             store.lock.lock();
@@ -273,21 +279,6 @@ public class AsyncStoreEvictionTest {
             cache.remove("k1");
 
             assertEquals("cache size must be 0", 0, cache.getAdvancedCache().getDataContainer().size());
-         }
-      });
-   }
-
-   @Test(groups = "unstable", description = "See ISPN-3631")
-   public void testSizeAfterRemoveAndExpiration() throws Exception {
-      TestingUtil.withCacheManager(new CacheCallable(config(false, 1)) {
-         @Override
-         public void call() {
-            cache.put("k1", "v1");
-            cache.remove("k1");
-            int size = cache.size();
-            TestingUtil.sleepThread(200);
-
-            assertFalse("remove only works after expiration", size == 1 && cache.size() == 0);
          }
       });
    }

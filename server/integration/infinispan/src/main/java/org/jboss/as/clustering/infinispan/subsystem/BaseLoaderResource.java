@@ -21,36 +21,43 @@
  */
 package org.jboss.as.clustering.infinispan.subsystem;
 
-import org.jboss.as.controller.*;
-import org.jboss.as.controller.descriptions.ResourceDescriptionResolver;
+import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.ADD;
+
+import org.infinispan.commons.util.Util;
+import org.jboss.as.controller.AttributeDefinition;
+import org.jboss.as.controller.OperationDefinition;
+import org.jboss.as.controller.OperationStepHandler;
+import org.jboss.as.controller.PathElement;
+import org.jboss.as.controller.SimpleAttributeDefinition;
+import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
+import org.jboss.as.controller.SimpleListAttributeDefinition;
+import org.jboss.as.controller.SimpleOperationDefinitionBuilder;
 import org.jboss.as.controller.registry.AttributeAccess;
 import org.jboss.as.controller.registry.ManagementResourceRegistration;
 import org.jboss.as.controller.registry.OperationEntry;
 import org.jboss.dmr.ModelNode;
 import org.jboss.dmr.ModelType;
 
-import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.ADD;
-
 /**
  * Base class for loader resources which require common loader attributes only.
  *
  * @author William Burns (c) 2013 Red Hat Inc.
  */
-public class BaseLoaderResource extends SimpleResourceDefinition {
+public class BaseLoaderResource extends CacheChildResource {
 
     // attributes
     static final SimpleAttributeDefinition PRELOAD =
             new SimpleAttributeDefinitionBuilder(ModelKeys.PRELOAD, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.PRELOAD.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(false))
                     .build();
     static final SimpleAttributeDefinition SHARED =
             new SimpleAttributeDefinitionBuilder(ModelKeys.SHARED, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.SHARED.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(false))
                     .build();
 
@@ -59,7 +66,7 @@ public class BaseLoaderResource extends SimpleResourceDefinition {
             new SimpleAttributeDefinitionBuilder(ModelKeys.NAME, ModelType.STRING, true)
                     .setXmlName(Attribute.NAME.getLocalName())
                     .setAllowExpression(false)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .build();
 
     // used to pass in a list of properties to the loader add command
@@ -72,29 +79,18 @@ public class BaseLoaderResource extends SimpleResourceDefinition {
     static final AttributeDefinition[] COMMON_LOADER_PARAMETERS = {SHARED, PRELOAD, PROPERTIES};
 
     // operations
-    private static final OperationDefinition CACHE_LOADER_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, InfinispanExtension.getResourceDescriptionResolver(ModelKeys.LOADER))
+    private static final OperationDefinition CACHE_LOADER_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, new InfinispanResourceDescriptionResolver(ModelKeys.LOADER))
         .setParameters(COMMON_LOADER_PARAMETERS)
         .build();
 
     private static final OperationDefinition RESET_LOADER_STATISTICS =
          new SimpleOperationDefinitionBuilder(
                "reset-loader-statistics",
-               InfinispanExtension.getResourceDescriptionResolver(ModelKeys.LOADER)
+               new InfinispanResourceDescriptionResolver(ModelKeys.LOADER)
          ).build();
 
-    public BaseLoaderResource(PathElement pathElement, ResourceDescriptionResolver descriptionResolver, OperationStepHandler addHandler, OperationStepHandler removeHandler) {
-        super(pathElement, descriptionResolver, addHandler, removeHandler);
-    }
-
-    @Override
-    public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        super.registerAttributes(resourceRegistration);
-
-        // check that we don't need a special handler here?
-        final OperationStepHandler writeHandler = new ReloadRequiredWriteAttributeHandler(COMMON_LOADER_ATTRIBUTES);
-        for (AttributeDefinition attr : COMMON_LOADER_ATTRIBUTES) {
-            resourceRegistration.registerReadWriteAttribute(attr, null, writeHandler);
-        }
+    public BaseLoaderResource(PathElement path, String resourceKey, CacheResource cacheResource, AttributeDefinition[] attributes) {
+        super(path, resourceKey, cacheResource, Util.arrayConcat(COMMON_LOADER_ATTRIBUTES, attributes));
     }
 
     // override the add operation to provide a custom definition (for the optional PROPERTIES parameter to add())
@@ -106,14 +102,13 @@ public class BaseLoaderResource extends SimpleResourceDefinition {
     @Override
     public void registerChildren(ManagementResourceRegistration resourceRegistration) {
         super.registerChildren(resourceRegistration);
-        resourceRegistration.registerSubModel(new LoaderPropertyResource());
+        resourceRegistration.registerSubModel(new LoaderPropertyResource(cacheResource));
     }
 
     @Override
     public void registerOperations(ManagementResourceRegistration resourceRegistration) {
         super.registerOperations(resourceRegistration);
-
-       resourceRegistration.registerOperationHandler(BaseLoaderResource.RESET_LOADER_STATISTICS,
+        resourceRegistration.registerOperationHandler(BaseLoaderResource.RESET_LOADER_STATISTICS,
                                                      CacheCommands.ResetCacheLoaderStatisticsCommand.INSTANCE);
     }
 }

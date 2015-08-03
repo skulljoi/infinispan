@@ -3,6 +3,7 @@ package org.infinispan.context.impl;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
+import org.infinispan.remoting.transport.Address;
 import org.infinispan.transaction.impl.AbstractCacheTransaction;
 import org.infinispan.transaction.xa.GlobalTransaction;
 
@@ -24,7 +25,8 @@ public abstract class AbstractTxInvocationContext<T extends AbstractCacheTransac
 
    private final T cacheTransaction;
 
-   protected AbstractTxInvocationContext(T cacheTransaction) {
+   protected AbstractTxInvocationContext(T cacheTransaction, Address origin) {
+      super(origin);
       if (cacheTransaction == null) {
          throw new NullPointerException("CacheTransaction cannot be null");
       }
@@ -54,7 +56,8 @@ public abstract class AbstractTxInvocationContext<T extends AbstractCacheTransac
 
    @Override
    public final boolean hasModifications() {
-      return getModifications() != null && !getModifications().isEmpty();
+      List<WriteCommand> replicableModifications = getModifications();
+      return replicableModifications != null && !replicableModifications.isEmpty();
    }
 
    @Override
@@ -78,7 +81,7 @@ public abstract class AbstractTxInvocationContext<T extends AbstractCacheTransac
    }
 
    @Override
-   public final void addAllAffectedKeys(Collection<Object> keys) {
+   public final void addAllAffectedKeys(Collection<?> keys) {
       if (keys != null && !keys.isEmpty()) {
          cacheTransaction.addAllAffectedKeys(keys);
       }

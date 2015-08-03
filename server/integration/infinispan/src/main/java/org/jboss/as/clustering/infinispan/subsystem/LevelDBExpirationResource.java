@@ -1,9 +1,11 @@
 package org.jboss.as.clustering.infinispan.subsystem;
 
-import org.jboss.as.controller.*;
+import org.jboss.as.controller.AttributeDefinition;
+import org.jboss.as.controller.PathElement;
+import org.jboss.as.controller.SimpleAttributeDefinition;
+import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
 import org.jboss.as.controller.registry.AttributeAccess;
 import org.jboss.as.controller.registry.ManagementResourceRegistration;
-import org.jboss.as.server.ServerEnvironment;
 import org.jboss.dmr.ModelNode;
 import org.jboss.dmr.ModelType;
 
@@ -14,7 +16,7 @@ import org.jboss.dmr.ModelType;
  *
  * @author Galder Zamarreño
  */
-public class LevelDBExpirationResource extends SimpleResourceDefinition {
+public class LevelDBExpirationResource extends CacheChildResource {
 
     public static final PathElement LEVELDB_EXPIRATION_PATH = PathElement.pathElement(ModelKeys.EXPIRATION, ModelKeys.EXPIRATION_NAME);
 
@@ -22,40 +24,21 @@ public class LevelDBExpirationResource extends SimpleResourceDefinition {
             new SimpleAttributeDefinitionBuilder(ModelKeys.PATH, ModelType.STRING, true)
                     .setXmlName(Attribute.PATH.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .build();
 
     static final SimpleAttributeDefinition QUEUE_SIZE =
             new SimpleAttributeDefinitionBuilder(ModelKeys.QUEUE_SIZE, ModelType.INT, true)
                     .setXmlName(Attribute.QUEUE_SIZE.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(10000))
                     .build();
 
     static final AttributeDefinition[] LEVELDB_EXPIRATION_ATTRIBUTES = {PATH, QUEUE_SIZE};
 
-    public LevelDBExpirationResource() {
-        super(LEVELDB_EXPIRATION_PATH,
-                InfinispanExtension.getResourceDescriptionResolver(ModelKeys.EXPIRATION),
-                CacheConfigOperationHandlers.LEVELDB_EXPIRATION_ADD,
-                ReloadRequiredRemoveStepHandler.INSTANCE);
-    }
-
-    @Override
-    public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        super.registerAttributes(resourceRegistration);
-
-        // check that we don't need a special handler here?
-        final OperationStepHandler writeHandler = new ReloadRequiredWriteAttributeHandler(LEVELDB_EXPIRATION_ATTRIBUTES);
-        for (AttributeDefinition attr : LEVELDB_EXPIRATION_ATTRIBUTES) {
-            resourceRegistration.registerReadWriteAttribute(attr, null, writeHandler);
-        }
-    }
-
-    @Override
-    public void registerOperations(ManagementResourceRegistration resourceRegistration) {
-        super.registerOperations(resourceRegistration);
+    public LevelDBExpirationResource(CacheResource cacheResource) {
+        super(LEVELDB_EXPIRATION_PATH, ModelKeys.EXPIRATION, cacheResource, LEVELDB_EXPIRATION_ATTRIBUTES);
     }
 
 }

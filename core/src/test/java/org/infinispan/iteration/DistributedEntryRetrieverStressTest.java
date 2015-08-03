@@ -151,7 +151,7 @@ public class DistributedEntryRetrieverStressTest extends MultipleCacheManagersTe
       futures[futures.length - 1] = fork(new Callable<Void>() {
          @Override
          public Void call() throws Exception {
-            TestResourceTracker.backgroundTestStarted(DistributedEntryRetrieverStressTest.this);
+            TestResourceTracker.testThreadStarted(DistributedEntryRetrieverStressTest.this);
             try {
                Cache<?, ?> cacheToKill = cache(CACHE_COUNT - 1);
                while (!complete.get()) {
@@ -199,7 +199,7 @@ public class DistributedEntryRetrieverStressTest extends MultipleCacheManagersTe
          try {
             futures[i].get(2, TimeUnit.MINUTES);
          } catch (TimeoutException e) {
-            System.err.println("Future " + i + " did not complete in time allotted.");
+            log.errorf("Future %s did not complete in time allotted.", i);
             throw e;
          }
       }

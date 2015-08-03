@@ -35,7 +35,7 @@ public class LocalDistributedExecutorTest extends org.infinispan.distexec.LocalD
 
    @Before
    public void setUp() {
-      TestResourceTracker.backgroundTestStarted(this);
+      TestResourceTracker.testThreadStarted(this);
       ConfigurationBuilder builder = getDefaultClusteredCacheConfig(getCacheMode(), false);
       createClusteredCaches(1, cacheName(), builder);
    }
@@ -176,8 +176,8 @@ public class LocalDistributedExecutorTest extends org.infinispan.distexec.LocalD
       super.testBasicTargetCallableWithNullTarget();
    }
 
-   @Test(expected = IllegalArgumentException.class)
-   public void testBasicTargetCallableWithIllegalTarget() {
+   @Test
+   public void testBasicTargetCallableWithIllegalTarget() throws ExecutionException, InterruptedException {
       super.testBasicTargetCallableWithIllegalTarget();
    }
 

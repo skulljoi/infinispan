@@ -18,6 +18,7 @@ public enum Attribute {
     AFTER("after"),
     ALIASES("aliases"),
     ALLOW_DUPLICATE_DOMAINS("duplicate-domains"),
+    ASYNC_EXECUTOR("async-executor"),
     ASYNC_MARSHALLING("async-marshalling"),
     AUDIT_LOGGER("audit-logger"),
     AUTO_COMMIT("auto-commit"),
@@ -37,9 +38,12 @@ public enum Attribute {
     DEFAULT_CACHE("default-cache"),
     ENABLED("enabled"),
     EXECUTOR("executor"),
+    @Deprecated
     EVICTION_EXECUTOR("eviction-executor"),
+    EXPIRATION_EXECUTOR("expiration-executor"),
     FAILURE_POLICY_CLASS("failure-policy-class"),
     FETCH_STATE("fetch-state"),
+    @Deprecated
     FLUSH_LOCK_TIMEOUT("flush-lock-timeout"),
     GROUP_NAME("group-name"),
     ID("id"),
@@ -70,6 +74,7 @@ public enum Attribute {
     MODIFICATION_QUEUE_SIZE("modification-queue-size"),
     MODULE("module"),
     NAME("name"),
+    NOTIFICATIONS("notifications"),
     ON_REHASH("onRehash"),
     OWNERS("owners"),
     PATH("path"),
@@ -97,12 +102,16 @@ public enum Attribute {
     SEGMENTS("segments"),
     SHARED("shared"),
     SHUTDOWN_HOOK("shutdown-hook"),
+    @Deprecated
     SHUTDOWN_TIMEOUT("shutdown-timeout"),
     SINGLETON("singleton"),
     SITE("site"),
+    SIZE("size"),
     SPIN_DURATION("deadlock-detection-spin"),
     STATISTICS("statistics"),
+    STATISTICS_AVAILABLE("statistics-available"),
     START("start"),
+    STATE_TRANSFER_EXECUTOR("state-transfer-executor"),
     STORE_KEYS_AS_BINARY("keys"),
     STORE_VALUES_AS_BINARY("values"),
     STRATEGY("strategy"),
@@ -120,6 +129,7 @@ public enum Attribute {
     TRANSACTION_MANAGER_LOOKUP_CLASS("transaction-manager-lookup"),
     TRANSACTION_PROTOCOL("protocol"),
     TRANSPORT("transport"),
+    TYPE("type"),
     UNRELIABLE_RETURN_VALUES("unreliable-return-values"),
     USE_TWO_PHASE_COMMIT("two-phase-commit"),
     VALUE("value"),
@@ -128,7 +138,7 @@ public enum Attribute {
     VERSIONING_SCHEME("scheme"),
     WAIT_TIME("wait-time"),
     WRITE_SKEW_CHECK("write-skew"),
-    FRAGMENTATION_FACTOR("fragmentation-factor");
+    FRAGMENTATION_FACTOR("fragmentation-factor"),
 
     ;
 

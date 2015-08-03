@@ -1,9 +1,11 @@
 package org.infinispan.manager;
 
 import org.infinispan.Cache;
+import org.infinispan.IllegalLifecycleStateException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.configuration.BuiltBy;
 import org.infinispan.commons.configuration.ConfigurationFor;
+import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.configuration.cache.AbstractStoreConfiguration;
 import org.infinispan.configuration.cache.AbstractStoreConfigurationBuilder;
 import org.infinispan.configuration.cache.AsyncStoreConfiguration;
@@ -239,7 +241,7 @@ public class CacheManagerTest extends AbstractInfinispanTest {
       }
    }
 
-   @Test(expectedExceptions = IllegalStateException.class)
+   @Test(expectedExceptions = IllegalLifecycleStateException.class)
    public void testCacheStopManagerStopFollowedByGetCache() {
       EmbeddedCacheManager localCacheManager = createCacheManager(false);
       try {
@@ -253,7 +255,7 @@ public class CacheManagerTest extends AbstractInfinispanTest {
       }
    }
 
-   @Test(expectedExceptions = IllegalStateException.class)
+   @Test(expectedExceptions = IllegalLifecycleStateException.class)
    public void testCacheStopManagerStopFollowedByCacheOp() {
       EmbeddedCacheManager localCacheManager = createCacheManager(false);
       try {
@@ -458,16 +460,17 @@ public class CacheManagerTest extends AbstractInfinispanTest {
    @ConfigurationFor(UnreliableCacheStore.class)
    @BuiltBy(UnreliableCacheStoreConfigurationBuilder.class)
    public static class UnreliableCacheStoreConfiguration extends AbstractStoreConfiguration {
-      public UnreliableCacheStoreConfiguration(AsyncStoreConfiguration async, SingletonStoreConfiguration singleton) {
-         super(false, false, false, async, singleton, false, false, null);
+
+      public UnreliableCacheStoreConfiguration(AttributeSet attributes, AsyncStoreConfiguration async, SingletonStoreConfiguration singletonStore) {
+         super(attributes, async, singletonStore);
       }
    }
 
    public static class UnreliableCacheStoreConfigurationBuilder
          extends AbstractStoreConfigurationBuilder<UnreliableCacheStoreConfiguration, UnreliableCacheStoreConfigurationBuilder> {
-      public UnreliableCacheStoreConfigurationBuilder(PersistenceConfigurationBuilder builder) { super(builder); }
+      public UnreliableCacheStoreConfigurationBuilder(PersistenceConfigurationBuilder builder) { super(builder, UnreliableCacheStoreConfiguration.attributeDefinitionSet()); }
       @Override public UnreliableCacheStoreConfiguration create() {
-         return new UnreliableCacheStoreConfiguration(async.create(), singleton().create());
+         return new UnreliableCacheStoreConfiguration(attributes.protect(), async.create(), singleton().create());
       }
       @Override public UnreliableCacheStoreConfigurationBuilder self() { return this; }
    }

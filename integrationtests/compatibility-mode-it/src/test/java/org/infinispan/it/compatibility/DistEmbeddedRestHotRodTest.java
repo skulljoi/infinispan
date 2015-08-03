@@ -12,7 +12,7 @@ import org.testng.annotations.Test;
  * @author Martin Gencur
  * @since 6.0
  */
-@Test(groups = "functional", testName = "it.compatibility.DistEmbeddedHotRodTest")
+@Test(groups = "functional", testName = "it.compatibility.DistEmbeddedRestHotRodTest")
 public class DistEmbeddedRestHotRodTest extends ReplEmbeddedRestHotRodTest {
 
    private final int numOwners = 1;
@@ -20,8 +20,8 @@ public class DistEmbeddedRestHotRodTest extends ReplEmbeddedRestHotRodTest {
    @Override
    @BeforeClass
    protected void setup() throws Exception {
-      cacheFactory1 = new CompatibilityCacheFactory<Object, Object>(CacheMode.DIST_SYNC, numOwners).setup();
-      cacheFactory2 = new CompatibilityCacheFactory<Object, Object>(CacheMode.DIST_SYNC, numOwners)
+      cacheFactory1 = new CompatibilityCacheFactory<Object, Object>(CacheMode.DIST_SYNC, numOwners, false).setup();
+      cacheFactory2 = new CompatibilityCacheFactory<Object, Object>(CacheMode.DIST_SYNC, numOwners, false)
             .setup(cacheFactory1.getHotRodPort(), 100);
    }
 

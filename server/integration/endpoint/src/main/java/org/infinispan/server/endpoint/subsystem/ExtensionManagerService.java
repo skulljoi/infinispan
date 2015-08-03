@@ -1,7 +1,9 @@
 package org.infinispan.server.endpoint.subsystem;
 
 import org.infinispan.commons.marshall.Marshaller;
+import org.infinispan.filter.KeyValueFilterConverterFactory;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverterFactory;
+import org.infinispan.notifications.cachelistener.filter.CacheEventFilterConverterFactory;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilterFactory;
 import org.infinispan.server.hotrod.HotRodServer;
 import org.jboss.msc.service.Service;
@@ -21,6 +23,8 @@ public class ExtensionManagerService implements Service<ExtensionManagerService>
     private final List<HotRodServer> servers = new ArrayList<>();
     private final Map<String, CacheEventFilterFactory> filterFactories = new HashMap<>();
     private final Map<String, CacheEventConverterFactory> converterFactories = new HashMap<>();
+    private final Map<String, CacheEventFilterConverterFactory> filterConverterFactories = new HashMap<>();
+    private final Map<String, KeyValueFilterConverterFactory> keyValueFilterConverterFactories = new HashMap<>();
 
     @Override
     public void start(StartContext context) throws StartException {
@@ -46,6 +50,16 @@ public class ExtensionManagerService implements Service<ExtensionManagerService>
             for (Map.Entry<String, CacheEventConverterFactory> entry : converterFactories.entrySet())
                 server.addCacheEventConverterFactory(entry.getKey(), entry.getValue());
         }
+
+        synchronized (filterConverterFactories) {
+            for (Map.Entry<String, CacheEventFilterConverterFactory> entry : filterConverterFactories.entrySet())
+                server.addCacheEventFilterConverterFactory(entry.getKey(), entry.getValue());
+        }
+
+        synchronized (keyValueFilterConverterFactories) {
+            for (Map.Entry<String, KeyValueFilterConverterFactory> entry : keyValueFilterConverterFactories.entrySet())
+                server.addKeyValueFilterConverterFactory(entry.getKey(), entry.getValue());
+        }
     }
 
     public void removeHotRodServer(HotRodServer server) {
@@ -61,6 +75,16 @@ public class ExtensionManagerService implements Service<ExtensionManagerService>
         synchronized (converterFactories) {
             for (String name : converterFactories.keySet())
                 server.removeCacheEventConverterFactory(name);
+        }
+
+        synchronized (filterConverterFactories) {
+            for (String name : filterConverterFactories.keySet())
+                server.removeCacheEventFilterConverterFactory(name);
+        }
+
+        synchronized (keyValueFilterConverterFactories) {
+            for (String name : keyValueFilterConverterFactories.keySet())
+                server.removeKeyValueFilterConverterFactory(name);
         }
     }
 
@@ -108,10 +132,54 @@ public class ExtensionManagerService implements Service<ExtensionManagerService>
         }
     }
 
+    public void addFilterConverterFactory(String name, CacheEventFilterConverterFactory factory) {
+        synchronized (filterConverterFactories) {
+            filterConverterFactories.put(name, factory);
+        }
+
+        synchronized (servers) {
+            for (HotRodServer server : servers)
+                server.addCacheEventFilterConverterFactory(name, factory);
+        }
+    }
+
+    public void removeFilterConverterFactory(String name) {
+        synchronized (filterConverterFactories) {
+            filterConverterFactories.remove(name);
+        }
+
+        synchronized (servers) {
+            for (HotRodServer server : servers)
+                server.removeCacheEventFilterConverterFactory(name);
+        }
+    }
+
+    public void addKeyValueFilterConverterFactory(String name, KeyValueFilterConverterFactory factory) {
+        synchronized (keyValueFilterConverterFactories) {
+           keyValueFilterConverterFactories.put(name, factory);
+        }
+
+        synchronized (servers) {
+            for (HotRodServer server : servers)
+                server.addKeyValueFilterConverterFactory(name, factory);
+        }
+    }
+
+   public void removeKeyValueFilterConverterFactory(String name) {
+        synchronized (keyValueFilterConverterFactories) {
+           keyValueFilterConverterFactories.remove(name);
+        }
+
+        synchronized (servers) {
+            for (HotRodServer server : servers)
+                server.removeKeyValueFilterConverterFactory(name);
+        }
+   }
+
     public void setMarshaller(Marshaller marshaller) {
        synchronized (servers) {
           for (HotRodServer server : servers)
-             server.setEventMarshaller(marshaller);
+             server.setMarshaller(marshaller);
        }
     }
 

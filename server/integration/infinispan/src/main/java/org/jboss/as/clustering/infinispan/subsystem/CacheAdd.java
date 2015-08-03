@@ -22,36 +22,32 @@
 
 package org.jboss.as.clustering.infinispan.subsystem;
 
-import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.OP_ADDR;
-
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URL;
-import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.EnumMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-
-import javax.transaction.TransactionManager;
-import javax.transaction.TransactionSynchronizationRegistry;
-
 import org.infinispan.Cache;
 import org.infinispan.commons.configuration.BuiltBy;
 import org.infinispan.commons.configuration.ConfiguredBy;
 import org.infinispan.commons.marshall.Marshaller;
 import org.infinispan.commons.util.FileLookupFactory;
 import org.infinispan.commons.util.TypedProperties;
-import org.infinispan.configuration.cache.*;
+import org.infinispan.configuration.cache.AuthorizationConfigurationBuilder;
 import org.infinispan.configuration.cache.BackupConfiguration.BackupStrategy;
+import org.infinispan.configuration.cache.BackupConfigurationBuilder;
+import org.infinispan.configuration.cache.BackupFailurePolicy;
+import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.configuration.cache.ClusterLoaderConfigurationBuilder;
+import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.cache.CustomStoreConfigurationBuilder;
+import org.infinispan.configuration.cache.Index;
+import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
+import org.infinispan.configuration.cache.SingleFileStoreConfigurationBuilder;
+import org.infinispan.configuration.cache.SitesConfigurationBuilder;
+import org.infinispan.configuration.cache.StoreConfigurationBuilder;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ParserRegistry;
 import org.infinispan.eviction.EvictionStrategy;
+import org.infinispan.eviction.EvictionType;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.persistence.factory.CacheStoreFactory;
 import org.infinispan.persistence.jdbc.DatabaseType;
 import org.infinispan.persistence.jdbc.configuration.AbstractJdbcStoreConfigurationBuilder;
 import org.infinispan.persistence.jdbc.configuration.JdbcBinaryStoreConfigurationBuilder;
@@ -65,16 +61,20 @@ import org.infinispan.persistence.remote.configuration.RemoteStoreConfigurationB
 import org.infinispan.persistence.rest.configuration.RestStoreConfigurationBuilder;
 import org.infinispan.persistence.rest.metadata.MimeMetadataHelper;
 import org.infinispan.persistence.spi.CacheLoader;
+import org.infinispan.server.infinispan.spi.service.CacheContainerServiceName;
+import org.infinispan.server.infinispan.spi.service.CacheServiceName;
 import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.tm.BatchModeTransactionManager;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.jboss.as.clustering.infinispan.InfinispanMessages;
+import org.jboss.as.clustering.infinispan.cs.configuration.DeployedStoreConfigurationBuilder;
+import org.jboss.as.clustering.infinispan.cs.factory.DeployedCacheStoreFactory;
+import org.jboss.as.clustering.infinispan.cs.factory.DeployedCacheStoreFactoryService;
 import org.jboss.as.controller.AbstractAddStepHandler;
 import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.OperationContext;
 import org.jboss.as.controller.OperationFailedException;
 import org.jboss.as.controller.PathAddress;
-import org.jboss.as.controller.ServiceVerificationHandler;
 import org.jboss.as.controller.registry.Resource;
 import org.jboss.as.controller.services.path.PathManager;
 import org.jboss.as.controller.services.path.PathManagerService;
@@ -100,6 +100,24 @@ import org.jboss.msc.service.ServiceTarget;
 import org.jboss.msc.value.InjectedValue;
 import org.jboss.msc.value.Value;
 import org.jboss.tm.XAResourceRecoveryRegistry;
+
+import javax.transaction.TransactionManager;
+import javax.transaction.TransactionSynchronizationRegistry;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+
+import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.OP_ADDR;
 
 /**
  * Base class for cache add handlers
@@ -182,7 +200,7 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
     }
 
     @Override
-    protected void performRuntime(OperationContext context, ModelNode operation, ModelNode model, ServiceVerificationHandler verificationHandler, List<ServiceController<?>> newControllers) throws OperationFailedException {
+    protected void performRuntime(OperationContext context, ModelNode operation, ModelNode model) throws OperationFailedException {
 
         // Because we use child resources in a read-only manner to configure the cache, replace the local model with the full model
         ModelNode cacheModel = Resource.Tools.readModel(context.readResource(PathAddress.EMPTY_ADDRESS));
@@ -192,10 +210,10 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
         ModelNode containerModel = context.readResourceFromRoot(containerAddress).getModel();
 
         // install the services from a reusable method
-        newControllers.addAll(this.installRuntimeServices(context, operation, containerModel, cacheModel, verificationHandler));
+        this.installRuntimeServices(context, operation, containerModel, cacheModel);
     }
 
-    Collection<ServiceController<?>> installRuntimeServices(OperationContext context, ModelNode operation, ModelNode containerModel, ModelNode cacheModel, ServiceVerificationHandler verificationHandler) throws OperationFailedException {
+    Collection<ServiceController<?>> installRuntimeServices(OperationContext context, ModelNode operation, ModelNode containerModel, ModelNode cacheModel) throws OperationFailedException {
 
         // get all required addresses, names and service names
         PathAddress cacheAddress = getCacheAddressFromOperation(operation);
@@ -234,20 +252,20 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
 
         // install the cache configuration service (configures a cache)
         controllers.add(this.installCacheConfigurationService(target, containerName, cacheName, defaultCache, moduleId,
-                        builder, config, dependencies, verificationHandler));
+                        builder, config, dependencies));
         log.debugf("Cache configuration service for %s installed for container %s", cacheName, containerName);
 
         // now install the corresponding cache service (starts a configured cache)
-        controllers.add(this.installCacheService(target, containerName, cacheName, defaultCache, initialMode, config, verificationHandler));
+        controllers.add(this.installCacheService(target, containerName, cacheName, defaultCache, initialMode, config));
 
         // install a name service entry for the cache
-        controllers.add(this.installJndiService(target, containerName, cacheName, InfinispanJndiName.createCacheJndiName(jndiName, containerName, cacheName), verificationHandler));
+        controllers.add(this.installJndiService(target, containerName, cacheName, InfinispanJndiName.createCacheJndiName(jndiName, containerName, cacheName)));
         log.debugf("Cache service for cache %s installed for container %s", cacheName, containerName);
 
         return controllers;
     }
 
-    void removeRuntimeServices(OperationContext context, ModelNode operation, ModelNode model)
+    void removeRuntimeServices(OperationContext context, ModelNode operation, ModelNode containerModel, ModelNode cacheModel)
             throws OperationFailedException {
         // get container and cache addresses
         final PathAddress cacheAddress = getCacheAddressFromOperation(operation) ;
@@ -259,13 +277,13 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
         // remove all services started by CacheAdd, in reverse order
         // remove the binder service
         ModelNode resolvedValue = null;
-        final String jndiName = (resolvedValue = CacheResource.JNDI_NAME.resolveModelAttribute(context, model)).isDefined() ? resolvedValue.asString() : null;
+        final String jndiName = (resolvedValue = CacheResource.JNDI_NAME.resolveModelAttribute(context, cacheModel)).isDefined() ? resolvedValue.asString() : null;
         ContextNames.BindInfo bindInfo = ContextNames.bindInfoFor(InfinispanJndiName.createCacheJndiName(jndiName, containerName, cacheName));
         context.removeService(bindInfo.getBinderServiceName()) ;
         // remove the CacheService instance
-        context.removeService(CacheService.getServiceName(containerName, cacheName));
+        context.removeService(CacheServiceName.CACHE.getServiceName(containerName, cacheName));
         // remove the cache configuration service
-        context.removeService(CacheConfigurationService.getServiceName(containerName, cacheName));
+        context.removeService(CacheServiceName.CONFIGURATION.getServiceName(containerName, cacheName));
 
         log.debugf("cache %s removed for container %s", cacheName, containerName);
     }
@@ -281,13 +299,13 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
     }
 
     ServiceController<?> installCacheConfigurationService(ServiceTarget target, String containerName, String cacheName, String defaultCache, ModuleIdentifier moduleId,
-            ConfigurationBuilder builder, Configuration config, List<Dependency<?>> dependencies, ServiceVerificationHandler verificationHandler) {
+            ConfigurationBuilder builder, Configuration config, List<Dependency<?>> dependencies) {
 
         final InjectedValue<EmbeddedCacheManager> container = new InjectedValue<EmbeddedCacheManager>();
         final CacheConfigurationDependencies cacheConfigurationDependencies = new CacheConfigurationDependencies(container);
         final Service<Configuration> service = new CacheConfigurationService(cacheName, builder, moduleId, cacheConfigurationDependencies);
-        final ServiceBuilder<?> configBuilder = target.addService(CacheConfigurationService.getServiceName(containerName, cacheName), service)
-                .addDependency(EmbeddedCacheManagerService.getServiceName(containerName), EmbeddedCacheManager.class, container)
+        final ServiceBuilder<?> configBuilder = target.addService(CacheServiceName.CONFIGURATION.getServiceName(containerName, cacheName), service)
+                .addDependency(CacheContainerServiceName.CACHE_CONTAINER.getServiceName(containerName), EmbeddedCacheManager.class, container)
                 .addDependency(Services.JBOSS_SERVICE_MODULE_LOADER, ModuleLoader.class, cacheConfigurationDependencies.getModuleLoaderInjector())
                 .setInitialMode(ServiceController.Mode.PASSIVE)
         ;
@@ -304,44 +322,33 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
         for (Dependency<?> dependency : dependencies) {
             this.addDependency(configBuilder, dependency);
         }
-        // add an alias for the default cache
-        if (cacheName.equals(defaultCache)) {
-            configBuilder.addAliases(CacheConfigurationService.getServiceName(containerName, null));
-        }
         return configBuilder.install();
     }
 
     ServiceController<?> installCacheService(ServiceTarget target, String containerName, String cacheName, String defaultCache, ServiceController.Mode initialMode,
-            Configuration config, ServiceVerificationHandler verificationHandler) {
+            Configuration config) {
 
         final InjectedValue<EmbeddedCacheManager> container = new InjectedValue<EmbeddedCacheManager>();
         final CacheDependencies cacheDependencies = new CacheDependencies(container);
         final Service<Cache<Object, Object>> service = new CacheService<Object, Object>(cacheName, cacheDependencies);
-        final ServiceBuilder<?> builder = target.addService(CacheService.getServiceName(containerName, cacheName), service)
-                .addDependency(CacheConfigurationService.getServiceName(containerName, cacheName))
-                .addDependency(EmbeddedCacheManagerService.getServiceName(containerName), EmbeddedCacheManager.class, container)
+        final ServiceBuilder<?> builder = target.addService(CacheServiceName.CACHE.getServiceName(containerName, cacheName), service)
+                .addDependency(CacheServiceName.CONFIGURATION.getServiceName(containerName, cacheName))
+                .addDependency(CacheContainerServiceName.CACHE_CONTAINER.getServiceName(containerName), EmbeddedCacheManager.class, container)
                 .setInitialMode(initialMode)
         ;
         if (config.transaction().recovery().enabled()) {
             builder.addDependency(TxnServices.JBOSS_TXN_ARJUNA_RECOVERY_MANAGER, XAResourceRecoveryRegistry.class, cacheDependencies.getRecoveryRegistryInjector());
         }
 
-        // add an alias for the default cache
-        if (cacheName.equals(defaultCache)) {
-            builder.addAliases(CacheService.getServiceName(containerName, null));
-        }
-
-        if (initialMode == ServiceController.Mode.ACTIVE) {
-            builder.addListener(verificationHandler);
-        }
+        builder.addDependency(DeployedCacheStoreFactoryService.SERVICE_NAME, DeployedCacheStoreFactory.class, cacheDependencies.getDeployedCacheStoreFactoryInjector());
 
         return builder.install();
     }
 
     @SuppressWarnings("rawtypes")
-    ServiceController<?> installJndiService(ServiceTarget target, String containerName, String cacheName, String jndiName, ServiceVerificationHandler verificationHandler) {
+    ServiceController<?> installJndiService(ServiceTarget target, String containerName, String cacheName, String jndiName) {
 
-        final ServiceName cacheServiceName = CacheService.getServiceName(containerName, cacheName);
+        final ServiceName cacheServiceName = CacheServiceName.CACHE.getServiceName(containerName, cacheName);
         final ContextNames.BindInfo bindInfo = ContextNames.bindInfoFor(jndiName);
         final BinderService binder = new BinderService(bindInfo.getBindName());
         return target.addService(bindInfo.getBinderServiceName(), binder)
@@ -379,6 +386,7 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
         CacheResource.CACHE_MODULE.validateAndSet(fromModel, toModel);
         CacheResource.INDEXING_PROPERTIES.validateAndSet(fromModel, toModel);
         CacheResource.STATISTICS.validateAndSet(fromModel, toModel);
+        CacheResource.STATISTICS_AVAILABLE.validateAndSet(fromModel, toModel);
         CacheResource.REMOTE_CACHE.validateAndSet(fromModel, toModel);
         CacheResource.REMOTE_SITE.validateAndSet(fromModel, toModel);
     }
@@ -395,6 +403,7 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
             throws OperationFailedException {
 
         builder.jmxStatistics().enabled(CacheResource.STATISTICS.resolveModelAttribute(context, cache).asBoolean());
+        builder.jmxStatistics().available(CacheResource.STATISTICS_AVAILABLE.resolveModelAttribute(context, cache).asBoolean());
 
         final Indexing indexing = Indexing.valueOf(CacheResource.INDEXING.resolveModelAttribute(context, cache).asString());
         final boolean autoConfig = CacheResource.INDEXING_AUTO_CONFIG.resolveModelAttribute(context, cache).asBoolean();
@@ -453,8 +462,9 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
             final long stopTimeout = TransactionResource.STOP_TIMEOUT.resolveModelAttribute(context, transaction).asLong();
             txMode = TransactionMode.valueOf(TransactionResource.MODE.resolveModelAttribute(context, transaction).asString());
             lockingMode = LockingMode.valueOf(TransactionResource.LOCKING.resolveModelAttribute(context, transaction).asString());
+            boolean notifications = TransactionResource.NOTIFICATIONS.resolveModelAttribute(context, transaction).asBoolean();
 
-            builder.transaction().cacheStopTimeout(stopTimeout);
+            builder.transaction().cacheStopTimeout(stopTimeout).notifications(notifications);
         }
         builder.transaction()
                 .transactionMode(txMode.getMode())
@@ -480,8 +490,15 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
             builder.eviction().strategy(strategy);
 
             if (strategy.isEnabled()) {
-                final int maxEntries = EvictionResource.MAX_ENTRIES.resolveModelAttribute(context, eviction).asInt();
-                builder.eviction().maxEntries(maxEntries);
+                if (eviction.hasDefined(ModelKeys.MAX_ENTRIES)) {
+                    final long maxEntries = EvictionResource.MAX_ENTRIES.resolveModelAttribute(context, eviction).asLong();
+                    builder.eviction().maxEntries(maxEntries);
+                } else {
+                    final long size = EvictionResource.SIZE.resolveModelAttribute(context, eviction).asLong();
+                    builder.eviction().size(size);
+                }
+                final EvictionType type = EvictionType.valueOf(EvictionResource.TYPE.resolveModelAttribute(context, eviction).asString());
+                builder.eviction().type(type);
             }
         }
         // expiration is a child resource
@@ -616,7 +633,7 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
             throws OperationFailedException {
 
         if (cache.hasDefined(storeKey)) {
-            for (Property storeEntry : cache.get(storeKey).asPropertyList()) {
+           for (Property storeEntry : cache.get(storeKey).asPropertyList()) {
                 ModelNode store = storeEntry.getValue();
 
                 final boolean passivation = BaseStoreResource.PASSIVATION.resolveModelAttribute(context, store).asBoolean();
@@ -627,7 +644,7 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
         }
     }
 
-    private StoreConfigurationBuilder<?, ?> buildCacheLoader(PersistenceConfigurationBuilder persistenceBuilder, ModelNode loader, String loaderKey) throws OperationFailedException {
+   private StoreConfigurationBuilder<?, ?> buildCacheLoader(PersistenceConfigurationBuilder persistenceBuilder, ModelNode loader, String loaderKey) throws OperationFailedException {
         if (loaderKey.equals(ModelKeys.CLUSTER_LOADER)) {
             final ClusterLoaderConfigurationBuilder builder = persistenceBuilder.addClusterLoader();
 
@@ -638,7 +655,6 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
         } else if (loaderKey.equals(ModelKeys.LOADER)) {
            String className = loader.require(ModelKeys.CLASS).asString();
            try {
-              Object instance = newInstance(className);
               return handleStoreOrLoaderClass(className, persistenceBuilder);
            } catch (Exception e) {
               throw InfinispanMessages.MESSAGES.invalidCacheStore(e, className);
@@ -649,27 +665,48 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
 
     }
 
-    private StoreConfigurationBuilder handleStoreOrLoaderClass(String className,
-                                                               PersistenceConfigurationBuilder persistenceBuilder)
-          throws ClassNotFoundException {
-       Class<?> storeImplClass = CacheLoader.class.getClassLoader().loadClass(className);
-       ConfiguredBy annotation = storeImplClass.getAnnotation(ConfiguredBy.class);
-       Class<? extends StoreConfigurationBuilder> builderClass = null;
-       if (annotation != null) {
-          Class<?> configuredBy = annotation.value();
-          if (configuredBy != null) {
-             BuiltBy builtBy = configuredBy.getAnnotation(BuiltBy.class);
-             builderClass = builtBy.value().asSubclass(StoreConfigurationBuilder.class);
-          }
+    private StoreConfigurationBuilder handleStoreOrLoaderClass(String className, PersistenceConfigurationBuilder persistenceBuilder) throws ClassNotFoundException {
+       if(isPresentInLoadClassLoader(className)) {
+          return createStoreConfigurationFromLocalClassloader(className, persistenceBuilder);
        }
-       StoreConfigurationBuilder scb;
-       if (builderClass == null) {
-          scb = persistenceBuilder.addStore(CustomStoreConfigurationBuilder.class).customStoreClass(storeImplClass);
-       } else {
-          scb = persistenceBuilder.addStore(builderClass);
-       }
-       return scb;
+       return createDeployedStoreConfiguration(className, persistenceBuilder);
     }
+
+   private StoreConfigurationBuilder createDeployedStoreConfiguration(String className, PersistenceConfigurationBuilder persistenceBuilder) {
+      DeployedStoreConfigurationBuilder deployedStoreConfigurationBuilder = persistenceBuilder.addStore(DeployedStoreConfigurationBuilder.class);
+      deployedStoreConfigurationBuilder.customStoreClassName(className);
+      return deployedStoreConfigurationBuilder;
+   }
+
+   private StoreConfigurationBuilder createStoreConfigurationFromLocalClassloader(String className, PersistenceConfigurationBuilder persistenceBuilder) throws ClassNotFoundException {
+      Class<?> storeImplClass = CacheLoader.class.getClassLoader().loadClass(className);
+      ConfiguredBy annotation = storeImplClass.getAnnotation(ConfiguredBy.class);
+      Class<? extends StoreConfigurationBuilder> builderClass = null;
+      if (annotation != null) {
+         Class<?> configuredBy = annotation.value();
+         if (configuredBy != null) {
+            BuiltBy builtBy = configuredBy.getAnnotation(BuiltBy.class);
+            builderClass = builtBy.value().asSubclass(StoreConfigurationBuilder.class);
+         }
+      }
+      if (builderClass == null) {
+         return persistenceBuilder.addStore(CustomStoreConfigurationBuilder.class).customStoreClass(storeImplClass);
+      }
+      return persistenceBuilder.addStore(builderClass);
+   }
+
+   private boolean isPresentInLoadClassLoader(String className) {
+      try {
+         newInstance(className);
+         return true;
+      } catch (InstantiationException e) {
+         throw new IllegalStateException("Could not instantiate class " + className, e);
+      } catch (IllegalAccessException e) {
+         throw new IllegalStateException("Class " + className + " seems not to have a default constructor", e);
+      } catch (ClassNotFoundException e) {
+         return false;
+      }
+   }
 
    private StoreConfigurationBuilder<?, ?> buildCacheStore(OperationContext context, PersistenceConfigurationBuilder persistenceBuilder, String containerName, ModelNode store, String storeKey, List<Dependency<?>> dependencies) throws OperationFailedException {
 
@@ -862,7 +899,6 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
         } else if (storeKey.equals(ModelKeys.STORE)) {
            String className = store.require(ModelKeys.CLASS).asString();
            try {
-              Object instance = newInstance(className);
               return handleStoreOrLoaderClass(className, persistenceBuilder);
            } catch (Exception e) {
               throw InfinispanMessages.MESSAGES.invalidCacheStore(e, className);
@@ -1033,6 +1069,7 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
 
         private final Value<EmbeddedCacheManager> container;
         private final InjectedValue<XAResourceRecoveryRegistry> recoveryRegistry = new InjectedValue<XAResourceRecoveryRegistry>();
+        private final InjectedValue<DeployedCacheStoreFactory> deployedCacheStoreFactory = new InjectedValue<DeployedCacheStoreFactory>();
 
         CacheDependencies(Value<EmbeddedCacheManager> container) {
             this.container = container;
@@ -1040,6 +1077,10 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
 
         Injector<XAResourceRecoveryRegistry> getRecoveryRegistryInjector() {
             return this.recoveryRegistry;
+        }
+
+        public InjectedValue<DeployedCacheStoreFactory> getDeployedCacheStoreFactoryInjector() {
+           return deployedCacheStoreFactory;
         }
 
         @Override
@@ -1050,6 +1091,11 @@ public abstract class CacheAdd extends AbstractAddStepHandler {
         @Override
         public XAResourceRecoveryRegistry getRecoveryRegistry() {
             return this.recoveryRegistry.getOptionalValue();
+        }
+
+        @Override
+        public CacheStoreFactory getDeployedCacheStoreFactory() {
+           return deployedCacheStoreFactory.getValue();
         }
     }
 

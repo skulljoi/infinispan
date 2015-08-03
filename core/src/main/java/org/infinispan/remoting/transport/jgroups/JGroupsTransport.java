@@ -1,7 +1,6 @@
 package org.infinispan.remoting.transport.jgroups;
 
 import org.infinispan.commands.ReplicableCommand;
-import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.marshall.StreamingMarshaller;
@@ -13,12 +12,15 @@ import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.global.TransportConfiguration;
 import org.infinispan.configuration.parsing.XmlConfigHelper;
 import org.infinispan.factories.GlobalComponentRegistry;
+import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.jmx.JmxUtil;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
+import org.infinispan.remoting.RpcException;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.inboundhandler.InboundInvocationHandler;
+import org.infinispan.remoting.responses.CacheNotFoundResponse;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.rpc.ResponseFilter;
 import org.infinispan.remoting.rpc.ResponseMode;
@@ -36,6 +38,7 @@ import org.jgroups.Event;
 import org.jgroups.JChannel;
 import org.jgroups.MembershipListener;
 import org.jgroups.MergeView;
+import org.jgroups.Message;
 import org.jgroups.UpHandler;
 import org.jgroups.View;
 import org.jgroups.blocks.RequestOptions;
@@ -46,30 +49,27 @@ import org.jgroups.protocols.relay.SiteMaster;
 import org.jgroups.protocols.tom.TOA;
 import org.jgroups.stack.AddressGenerator;
 import org.jgroups.util.Buffer;
-import org.jgroups.util.ExtendedUUID;
 import org.jgroups.util.Rsp;
-import org.jgroups.util.RspList;
 import org.jgroups.util.TopologyUUID;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static org.infinispan.factories.KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR;
 import static org.infinispan.factories.KnownComponentNames.GLOBAL_MARSHALLER;
 
 /**
@@ -104,11 +104,11 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
    protected CommandAwareRpcDispatcher dispatcher;
    protected TypedProperties props;
    protected StreamingMarshaller marshaller;
-   protected ExecutorService asyncExecutor;
    protected CacheManagerNotifier notifier;
    protected GlobalComponentRegistry gcr;
    private TimeService timeService;
    protected InboundInvocationHandler globalHandler;
+   private ScheduledExecutorService timeoutExecutor;
 
    private boolean globalStatsEnabled;
    private MBeanServer mbeanServer;
@@ -120,6 +120,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
 
    // these members are not valid until we have received the first view on a second thread
    // and channelConnectedLatch is signaled
+   protected volatile int viewId = -1;
    protected volatile List<Address> members = null;
    protected volatile Address coordinator = null;
    protected volatile boolean isCoordinator = false;
@@ -149,6 +150,10 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       return log;
    }
 
+   protected ScheduledExecutorService getTimeoutExecutor() {
+      return timeoutExecutor;
+  }
+
    // ------------------------------------------------------------------------------------------------------------------
    // Lifecycle and setup stuff
    // ------------------------------------------------------------------------------------------------------------------
@@ -157,21 +162,20 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
     * Initializes the transport with global cache configuration and transport-specific properties.
     *
     * @param marshaller    marshaller to use for marshalling and unmarshalling
-    * @param asyncExecutor executor to use for asynchronous calls
     * @param notifier      notifier to use
     * @param gcr           the global component registry
     */
    @Inject
    public void initialize(@ComponentName(GLOBAL_MARSHALLER) StreamingMarshaller marshaller,
-                          @ComponentName(ASYNC_TRANSPORT_EXECUTOR) ExecutorService asyncExecutor,
                           CacheManagerNotifier notifier, GlobalComponentRegistry gcr,
-                          TimeService timeService, InboundInvocationHandler globalHandler) {
+                          TimeService timeService, InboundInvocationHandler globalHandler,
+                          @ComponentName(KnownComponentNames.TIMEOUT_SCHEDULE_EXECUTOR) ScheduledExecutorService timeoutExecutor) {
       this.marshaller = marshaller;
-      this.asyncExecutor = asyncExecutor;
       this.notifier = notifier;
       this.gcr = gcr;
       this.timeService = timeService;
       this.globalHandler = globalHandler;
+      this.timeoutExecutor = timeoutExecutor;
    }
 
    @Override
@@ -224,10 +228,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
    public int getViewId() {
       if (channel == null)
          throw new CacheException("The cache has been stopped and invocations are not allowed!");
-      View view = channel.getView();
-      if (view == null)
-         return -1;
-      return (int) view.getViewId().getId();
+      return viewId;
    }
 
    @Override
@@ -237,8 +238,8 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       log.tracef("Waiting on view %d being accepted", viewId);
       viewUpdateLock.lock();
       try {
-         while (channel != null && this.getViewId() < viewId) {
-               viewUpdateCondition.await();
+         while (channel != null && getViewId() < viewId) {
+            viewUpdateCondition.await();
          }
       } finally {
          viewUpdateLock.unlock();
@@ -284,6 +285,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       }
 
       channel = null;
+      viewId = -1;
       members = InfinispanCollections.emptyList();
       coordinator = null;
       isCoordinator = false;
@@ -325,9 +327,8 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
             ((JChannel) channel).setAddressGenerator(new AddressGenerator() {
                @Override
                public org.jgroups.Address generateAddress() {
-                  return TopologyUUID.randomUUID(channel.getName(),
-                        transportCfg.siteId(), transportCfg.rackId(),
-                        transportCfg.machineId());
+                  return TopologyUUID.randomUUID(channel.getName(), transportCfg.siteId(),
+                        transportCfg.rackId(), transportCfg.machineId());
                }
             });
          } else {
@@ -351,7 +352,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
    }
 
    protected void initRPCDispatcher() {
-      dispatcher = new CommandAwareRpcDispatcher(channel, this, asyncExecutor, gcr, globalHandler);
+      dispatcher = new CommandAwareRpcDispatcher(channel, this, globalHandler, timeoutExecutor);
       MarshallerAdapter adapter = new MarshallerAdapter(marshaller);
       dispatcher.setRequestMarshaller(adapter);
       dispatcher.setResponseMarshaller(adapter);
@@ -387,24 +388,21 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
 
          if (channel == null && props.containsKey(CONFIGURATION_FILE)) {
             cfg = props.getProperty(CONFIGURATION_FILE);
-            Collection<URL> confs = null;
+            Collection<URL> confs = Collections.emptyList();
             try {
                confs = fileLookup.lookupFileLocations(cfg, configuration.classLoader());
             } catch (IOException io) {
                //ignore, we check confs later for various states
             }
             if (confs.isEmpty()) {
-               throw new CacheConfigurationException(CONFIGURATION_FILE
-                        + " property specifies value " + cfg + " that could not be read!",
-                        new FileNotFoundException(cfg));
+               throw log.jgroupsConfigurationNotFound(cfg);
             } else if (confs.size() > 1) {
                log.ambiguousConfigurationFiles(Util.toStr(confs));
             }
             try {
                channel = new JChannel(confs.iterator().next());
             } catch (Exception e) {
-               log.errorCreatingChannelFromConfigFile(cfg);
-               throw new CacheException(e);
+               throw log.errorCreatingChannelFromConfigFile(cfg, e);
             }
          }
 
@@ -413,8 +411,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
             try {
                channel = new JChannel(XmlConfigHelper.stringToElement(cfg));
             } catch (Exception e) {
-               log.errorCreatingChannelFromXML(cfg);
-               throw new CacheException(e);
+               throw log.errorCreatingChannelFromXML(cfg, e);
             }
          }
 
@@ -423,8 +420,8 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
             try {
                channel = new JChannel(cfg);
             } catch (Exception e) {
-               log.errorCreatingChannelFromConfigString(cfg);
-               throw new CacheException(e);
+               throw log.errorCreatingChannelFromConfigString(cfg, e);
+
             }
          }
       }
@@ -434,7 +431,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
          try {
             channel = new JChannel(fileLookup.lookupFileLocation(DEFAULT_JGROUPS_CONFIGURATION_FILE, configuration.classLoader()));
          } catch (Exception e) {
-            throw new CacheException("Unable to start JGroups channel", e);
+            throw log.errorCreatingChannelFromConfigFile(DEFAULT_JGROUPS_CONFIGURATION_FILE, e);
          }
       }
    }
@@ -499,25 +496,28 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
 
    @Override
    public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand,
-                                                ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter,
-                                                boolean totalOrder, boolean anycast) throws Exception {
-      DeliverOrder deliverOrder = DeliverOrder.PER_SENDER;
-      if (totalOrder) {
-         deliverOrder = DeliverOrder.TOTAL;
-      } else if (usePriorityQueue) {
-         deliverOrder = DeliverOrder.NONE;
+                                                ResponseMode mode, long timeout, ResponseFilter responseFilter,
+                                                DeliverOrder deliverOrder, boolean anycast) throws Exception {
+      CompletableFuture<Map<Address, Response>> future = invokeRemotelyAsync(recipients, rpcCommand, mode,
+            timeout, responseFilter, deliverOrder, anycast);
+      try {
+         return future.get();
+      } catch (ExecutionException e) {
+         throw Util.rewrapAsCacheException(e.getCause());
       }
-      return invokeRemotely(recipients, rpcCommand, mode, timeout, responseFilter, deliverOrder, anycast);
    }
 
    @Override
-   public Map<Address, Response> invokeRemotely(Collection<Address> recipients, ReplicableCommand rpcCommand,
-                                                ResponseMode mode, long timeout, ResponseFilter responseFilter,
-                                                DeliverOrder deliverOrder, boolean anycast) throws Exception {
+   public CompletableFuture<Map<Address, Response>> invokeRemotelyAsync(Collection<Address> recipients,
+                                                                        ReplicableCommand rpcCommand,
+                                                                        ResponseMode mode, long timeout,
+                                                                        ResponseFilter responseFilter,
+                                                                        DeliverOrder deliverOrder,
+                                                                        boolean anycast) throws Exception {
       if (recipients != null && recipients.isEmpty()) {
          // don't send if recipients list is empty
          log.trace("Destination list is empty: no need to send message");
-         return InfinispanCollections.emptyMap();
+         return CompletableFuture.completedFuture(InfinispanCollections.emptyMap());
       }
       boolean totalOrder = deliverOrder == DeliverOrder.TOTAL;
 
@@ -526,92 +526,197 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       Address self = getAddress();
       boolean ignoreLeavers = mode == ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS || mode == ResponseMode.WAIT_FOR_VALID_RESPONSE;
       if (mode.isSynchronous() && recipients != null && !getMembers().containsAll(recipients)) {
-         if (ignoreLeavers) { // SYNCHRONOUS_IGNORE_LEAVERS || WAIT_FOR_VALID_RESPONSE
-            recipients = new HashSet<>(recipients);
-            recipients.retainAll(getMembers());
-         } else { // SYNCHRONOUS
-            throw new SuspectException("One or more nodes have left the cluster while replicating command " + rpcCommand);
+         if (!ignoreLeavers) { // SYNCHRONOUS
+            CompletableFuture<Map<Address, Response>> future = new CompletableFuture<>();
+            future.completeExceptionally(new SuspectException("One or more nodes have left the cluster while replicating command " + rpcCommand));
+            return future;
          }
       }
-      boolean asyncMarshalling = mode == ResponseMode.ASYNCHRONOUS;
 
       List<org.jgroups.Address> jgAddressList = toJGroupsAddressListExcludingSelf(recipients, totalOrder);
       int membersSize = members.size();
       boolean broadcast = jgAddressList == null || recipients.size() == membersSize;
       if (membersSize < 3 || (jgAddressList != null && jgAddressList.size() < 2)) broadcast = false;
-      RspList<Object> rsps = null;
-      Response singleResponse = null;
+      RspListFuture rspListFuture = null;
+      SingleResponseFuture singleResponseFuture = null;
       org.jgroups.Address singleJGAddress = null;
 
       if (broadcast) {
-         rsps = dispatcher.broadcastRemoteCommands(rpcCommand, toJGroupsMode(mode), timeout,
-                                                   toJGroupsFilter(responseFilter), deliverOrder, asyncMarshalling, ignoreLeavers);
+         rspListFuture = dispatcher.invokeRemoteCommands(null, rpcCommand, toJGroupsMode(mode), timeout,
+               toJGroupsFilter(responseFilter), deliverOrder);
       } else if (totalOrder) {
-         rsps = dispatcher.invokeRemoteCommands(jgAddressList, rpcCommand, toJGroupsMode(mode), timeout,
-                                                toJGroupsFilter(responseFilter), deliverOrder, asyncMarshalling, ignoreLeavers);
+         rspListFuture = dispatcher.invokeRemoteCommands(jgAddressList, rpcCommand, toJGroupsMode(mode),
+               timeout, toJGroupsFilter(responseFilter), deliverOrder);
       } else {
          if (jgAddressList == null || !jgAddressList.isEmpty()) {
             boolean singleRecipient = !ignoreLeavers && jgAddressList != null && jgAddressList.size() == 1;
             boolean skipRpc = false;
             if (jgAddressList == null) {
+               // broadcast with membersSize < 3
                ArrayList<Address> others = new ArrayList<>(members);
                others.remove(self);
                skipRpc = others.isEmpty();
                singleRecipient = !ignoreLeavers && others.size() == 1;
                if (singleRecipient) singleJGAddress = toJGroupsAddress(others.get(0));
             }
-            if (!skipRpc) {
-               if (singleRecipient) {
-                  if (singleJGAddress == null) singleJGAddress = jgAddressList.get(0);
-                  singleResponse = dispatcher.invokeRemoteCommand(singleJGAddress, rpcCommand, toJGroupsMode(mode), timeout,
-                                                                  deliverOrder, asyncMarshalling);
-               } else {
-                  rsps = dispatcher.invokeRemoteCommands(jgAddressList, rpcCommand, toJGroupsMode(mode), timeout,
-                                                         toJGroupsFilter(responseFilter), deliverOrder, asyncMarshalling, ignoreLeavers);
+            if (skipRpc) {
+               return CompletableFuture.completedFuture(InfinispanCollections.emptyMap());
+            }
+
+            if (singleRecipient) {
+               if (singleJGAddress == null) singleJGAddress = jgAddressList.get(0);
+               singleResponseFuture = dispatcher.invokeRemoteCommand(singleJGAddress, rpcCommand,
+                     toJGroupsMode(mode), timeout, deliverOrder);
+            } else {
+               rspListFuture = dispatcher.invokeRemoteCommands(jgAddressList, rpcCommand, toJGroupsMode(
+                     mode), timeout, toJGroupsFilter(responseFilter), deliverOrder);
+
+            }
+         } else {
+            return CompletableFuture.completedFuture(InfinispanCollections.emptyMap());
+         }
+      }
+
+      if (mode.isAsynchronous()) {
+         return CompletableFuture.completedFuture(InfinispanCollections.emptyMap());
+      }
+
+      if (singleResponseFuture != null) {
+         // Unicast request
+         return singleResponseFuture.thenApply(rsp -> {
+            if (trace) log.tracef("Response: %s", rsp);
+            Address sender = fromJGroupsAddress(rsp.getSender());
+            Response response = checkRsp(rsp, sender, responseFilter != null, ignoreLeavers);
+            return Collections.singletonMap(sender, response);
+         });
+      } else if (rspListFuture != null) {
+         // Broadcast/anycast request
+         return rspListFuture.thenApply(rsps -> {
+            if (trace) log.tracef("Responses: %s", rsps);
+            Map<Address, Response> retval = new HashMap<>(rsps.size());
+            boolean hasResponses = false;
+            boolean hasValidResponses = false;
+            for (Rsp<Response> rsp : rsps.values()) {
+               hasResponses |= rsp.wasReceived();
+               Address sender = fromJGroupsAddress(rsp.getSender());
+               Response response = checkRsp(rsp, sender, responseFilter != null, ignoreLeavers);
+               if (response != null) {
+                  hasValidResponses = true;
+                  retval.put(sender, response);
                }
             }
-         }
+
+            if (!hasValidResponses) {
+               // PartitionHandlingInterceptor relies on receiving a RpcException if there are only invalid responses
+               // But we still need to throw a TimeoutException if there are no responses at all.
+               if (hasResponses) {
+                  throw new RpcException(String.format("Received invalid responses from all of %s", recipients));
+               } else {
+                  throw new TimeoutException("Timed out waiting for valid responses!");
+               }
+            }
+
+            if (recipients != null) {
+               for (Address dest : recipients) {
+                  if (!dest.equals(getAddress()) && !retval.containsKey(dest)) {
+                     retval.put(dest, CacheNotFoundResponse.INSTANCE);
+                  }
+               }
+            }
+
+            return retval;
+         });
+      } else {
+         throw new IllegalStateException("Should have one remote invocation future");
+      }
+   }
+
+   @Override
+   public Map<Address, Response> invokeRemotely(Map<Address, ReplicableCommand> rpcCommands, ResponseMode mode,
+                                                long timeout, boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder, boolean anycast)
+         throws Exception {
+      DeliverOrder deliverOrder = DeliverOrder.PER_SENDER;
+      if (totalOrder) {
+         deliverOrder = DeliverOrder.TOTAL;
+      } else if (usePriorityQueue) {
+         deliverOrder = DeliverOrder.NONE;
+      }
+      return invokeRemotely(rpcCommands, mode, timeout, responseFilter, deliverOrder, anycast);
+   }
+
+   @Override
+   public Map<Address, Response> invokeRemotely(Map<Address, ReplicableCommand> rpcCommands, ResponseMode mode,
+         long timeout, ResponseFilter responseFilter, DeliverOrder deliverOrder, boolean anycast)
+         throws Exception {
+      if (rpcCommands == null || rpcCommands.isEmpty()) {
+         // don't send if recipients list is empty
+         log.trace("Destination list is empty: no need to send message");
+         return InfinispanCollections.emptyMap();
+      }
+
+      if (trace)
+         log.tracef("commands=%s, mode=%s, timeout=%s", rpcCommands, mode, timeout);
+      boolean ignoreLeavers = mode == ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS || mode == ResponseMode.WAIT_FOR_VALID_RESPONSE;
+
+      SingleResponseFuture[] futures = new SingleResponseFuture[rpcCommands.size()];
+      int i = 0;
+      for (Map.Entry<Address, ReplicableCommand> entry : rpcCommands.entrySet()) {
+         org.jgroups.Address recipient = toJGroupsAddress(entry.getKey());
+         ReplicableCommand command = entry.getValue();
+         SingleResponseFuture future = dispatcher.invokeRemoteCommand(recipient, command, toJGroupsMode(mode),
+               timeout, deliverOrder);
+         futures[i] = future;
+         i++;
       }
 
       if (mode.isAsynchronous())
-         return InfinispanCollections.emptyMap();// async case
+         return InfinispanCollections.emptyMap();
 
-      Map<Address, Response> responses;
-      if (rsps == null) {
-         if (singleJGAddress == null || (singleResponse == null && rpcCommand instanceof ClusteredGetCommand)) {
-            responses = InfinispanCollections.emptyMap();
-         } else {
-            responses = Collections.singletonMap(fromJGroupsAddress(singleJGAddress), singleResponse);
-         }
-      } else {
-         Map<Address, Response> retval = new HashMap<>(rsps.size());
+      CompletableFuture<Void> bigFuture = CompletableFuture.allOf(futures);
+      bigFuture.get();
 
-         boolean noValidResponses = true;
-         for (Rsp<Object> rsp : rsps.values()) {
-            noValidResponses &= parseResponseAndAddToResponseList(rsp.getValue(), rsp.getException(), retval, rsp.wasSuspected(), rsp.wasReceived(), fromJGroupsAddress(rsp.getSender()),
-                                                                  responseFilter != null, ignoreLeavers);
-         }
-
-         if (noValidResponses)
-            throw new TimeoutException("Timed out waiting for valid responses!");
-         responses = retval;
+      List<Rsp<Response>> rsps = new ArrayList<>();
+      for (SingleResponseFuture future : futures) {
+         rsps.add(future.get());
       }
-      return responses;
+
+      Map<Address, Response> retval = new HashMap<>(rsps.size());
+      boolean hasResponses = false;
+      for (Rsp<Response> rsp : rsps) {
+         Address sender = fromJGroupsAddress(rsp.getSender());
+         Response response = checkRsp(rsp, sender, responseFilter != null, ignoreLeavers);
+         if (response != null) {
+            retval.put(sender, response);
+            hasResponses = true;
+         }
+      }
+
+      if (!hasResponses) {
+         // It is possible for their to be no valid response if we ignored leavers and
+         // all of our targets left
+         // If all the targets were suspected we didn't have a timeout
+         throw new TimeoutException("Timed out waiting for valid responses!");
+      }
+      return retval;
    }
 
    @Override
    public BackupResponse backupRemotely(Collection<XSiteBackup> backups, XSiteReplicateCommand rpcCommand) throws Exception {
       log.tracef("About to send to backups %s, command %s", backups, rpcCommand);
-      Buffer buf = CommandAwareRpcDispatcher.marshallCall(dispatcher.getMarshaller(), rpcCommand);
+      Buffer buf = dispatcher.marshallCall(dispatcher.getMarshaller(), rpcCommand);
       Map<XSiteBackup, Future<Object>> syncBackupCalls = new HashMap<>(backups.size());
       for (XSiteBackup xsb : backups) {
          SiteMaster recipient = new SiteMaster(xsb.getSiteName());
          if (xsb.isSync()) {
             RequestOptions sync = new RequestOptions(org.jgroups.blocks.ResponseMode.GET_ALL, xsb.getTimeout());
-            syncBackupCalls.put(xsb, dispatcher.sendMessageWithFuture(CommandAwareRpcDispatcher.constructMessage(buf, recipient, true, org.jgroups.blocks.ResponseMode.GET_ALL, false, false), sync));
+            Message msg = CommandAwareRpcDispatcher.constructMessage(buf, recipient,
+                  org.jgroups.blocks.ResponseMode.GET_ALL, false, DeliverOrder.NONE);
+            syncBackupCalls.put(xsb, dispatcher.sendMessageWithFuture(msg, sync));
          } else {
             RequestOptions async = new RequestOptions(org.jgroups.blocks.ResponseMode.GET_NONE, xsb.getTimeout());
-            dispatcher.sendMessage(CommandAwareRpcDispatcher.constructMessage(buf, recipient, false, org.jgroups.blocks.ResponseMode.GET_NONE, false, false), async);
+            Message msg = CommandAwareRpcDispatcher.constructMessage(buf, recipient,
+                  org.jgroups.blocks.ResponseMode.GET_NONE, false, DeliverOrder.PER_SENDER);
+            dispatcher.sendMessage(msg, async);
          }
       }
       return new JGroupsBackupResponse(syncBackupCalls, timeService);
@@ -620,13 +725,11 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
    private static org.jgroups.blocks.ResponseMode toJGroupsMode(ResponseMode mode) {
       switch (mode) {
          case ASYNCHRONOUS:
-         case ASYNCHRONOUS_WITH_SYNC_MARSHALLING:
             return org.jgroups.blocks.ResponseMode.GET_NONE;
          case SYNCHRONOUS:
          case SYNCHRONOUS_IGNORE_LEAVERS:
-            return org.jgroups.blocks.ResponseMode.GET_ALL;
          case WAIT_FOR_VALID_RESPONSE:
-            return org.jgroups.blocks.ResponseMode.GET_FIRST;
+            return org.jgroups.blocks.ResponseMode.GET_ALL;
       }
       throw new CacheException("Unknown response mode " + mode);
    }
@@ -635,9 +738,31 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       return responseFilter == null ? null : new JGroupsResponseFilterAdapter(responseFilter);
    }
 
+   protected Response checkRsp(Rsp<Response> rsp, Address sender, boolean ignoreTimeout,
+                               boolean ignoreLeavers) {
+      Response response;
+      if (rsp.wasReceived()) {
+         if (rsp.hasException()) {
+            log.tracef(rsp.getException(), "Unexpected exception from %s", sender);
+            throw log.remoteException(sender, rsp.getException());
+         } else {
+            // TODO We should handle CacheNotFoundResponse exactly the same way as wasSuspected
+            response = checkResponse(rsp.getValue(), sender, true);
+         }
+      } else if (rsp.wasSuspected()) {
+         response = checkResponse(CacheNotFoundResponse.INSTANCE, sender, ignoreLeavers);
+      } else {
+         if (!ignoreTimeout) throw new TimeoutException("Replication timeout for " + sender);
+         response = null;
+      }
+
+      return response;
+   }
+
    // ------------------------------------------------------------------------------------------------------------------
    // Implementations of JGroups interfaces
    // ------------------------------------------------------------------------------------------------------------------
+
 
    private interface Notify {
       void emitNotification(List<Address> oldMembers, View newView);
@@ -646,7 +771,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
    private class NotifyViewChange implements Notify {
       @Override
       public void emitNotification(List<Address> oldMembers, View newView) {
-         notifier.notifyViewChange(members, oldMembers, getAddress(), (int) newView.getVid().getId());
+         notifier.notifyViewChange(members, oldMembers, getAddress(), (int) newView.getViewId().getId());
       }
    }
 
@@ -657,12 +782,12 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
          MergeView mv = (MergeView) newView;
 
          final Address address = getAddress();
-         final int viewId = (int) newView.getVid().getId();
+         final int viewId = (int) newView.getViewId().getId();
          notifier.notifyMerge(members, oldMembers, address, viewId, getSubgroups(mv.getSubgroups()));
       }
 
       private List<List<Address>> getSubgroups(List<View> subviews) {
-         List<List<Address>> l = new ArrayList<List<Address>>(subviews.size());
+         List<List<Address>> l = new ArrayList<>(subviews.size());
          for (View v : subviews)
             l.add(fromJGroupsAddressList(v.getMembers()));
          return l;
@@ -679,26 +804,31 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       }
 
       List<Address> oldMembers = members;
-      // we need a defensive copy anyway
-      members = fromJGroupsAddressList(newMembers);
 
-      // Delta view debug log for large cluster
-      if (log.isDebugEnabled() && oldMembers != null) {
-         List<Address> joined = new ArrayList<Address>(members);
-         joined.removeAll(oldMembers);
-         List<Address> left = new ArrayList<Address>(oldMembers);
-         left.removeAll(members);
-         log.debugf("Joined: %s, Left: %s", joined, left);
-      }
-
-      // Now that we have a view, figure out if we are the isCoordinator
-      coordinator = fromJGroupsAddress(newView.getCreator());
-      isCoordinator = coordinator != null && coordinator.equals(getAddress());
-
-      // Wake up any threads that are waiting to know about who the isCoordinator is
-      // do it before the notifications, so if a listener throws an exception we can still start
+      // Update every view-related field while holding the lock so that waitForView only returns
+      // after everything was updated.
       viewUpdateLock.lock();
       try {
+         viewId = (int) newView.getViewId().getId();
+
+         // we need a defensive copy anyway
+         members = fromJGroupsAddressList(newMembers);
+
+         // Delta view debug log for large cluster
+         if (log.isDebugEnabled() && oldMembers != null) {
+            List<Address> joined = new ArrayList<>(members);
+            joined.removeAll(oldMembers);
+            List<Address> left = new ArrayList<>(oldMembers);
+            left.removeAll(members);
+            log.debugf("Joined: %s, Left: %s", joined, left);
+         }
+
+         // Now that we have a view, figure out if we are the isCoordinator
+         coordinator = fromJGroupsAddress(newView.getCreator());
+         isCoordinator = coordinator != null && coordinator.equals(getAddress());
+
+         // Wake up any threads that are waiting to know about who the isCoordinator is
+         // do it before the notifications, so if a listener throws an exception we can still start
          viewUpdateCondition.signalAll();
       } finally {
          viewUpdateLock.unlock();
@@ -719,6 +849,8 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
 
          n.emitNotification(oldMembers, newView);
       }
+
+      JGroupsAddressCache.pruneAddressCache();
    }
 
    @Override
@@ -744,11 +876,8 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       return ((JGroupsAddress) a).address;
    }
 
-   static Address fromJGroupsAddress(org.jgroups.Address addr) {
-      if (addr instanceof ExtendedUUID)
-         return new JGroupsTopologyAwareAddress((ExtendedUUID)addr);
-      else
-         return new JGroupsAddress(addr);
+   static Address fromJGroupsAddress(final org.jgroups.Address addr) {
+      return JGroupsAddressCache.fromJGroupsAddress(addr);
    }
 
    private List<org.jgroups.Address> toJGroupsAddressListExcludingSelf(Collection<Address> list, boolean totalOrder) {
@@ -757,7 +886,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       if (list.isEmpty())
          return InfinispanCollections.emptyList();
 
-      List<org.jgroups.Address> retval = new ArrayList<org.jgroups.Address>(list.size());
+      List<org.jgroups.Address> retval = new ArrayList<>(list.size());
       boolean ignoreSelf = !totalOrder; //in total order, we need to send the message to ourselves!
       Address self = getAddress();
       for (Address a : list) {
@@ -775,7 +904,7 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
       if (list == null || list.isEmpty())
          return InfinispanCollections.emptyList();
 
-      List<Address> retval = new ArrayList<Address>(list.size());
+      List<Address> retval = new ArrayList<>(list.size());
       for (org.jgroups.Address a : list)
          retval.add(fromJGroupsAddress(a));
       return Collections.unmodifiableList(retval);

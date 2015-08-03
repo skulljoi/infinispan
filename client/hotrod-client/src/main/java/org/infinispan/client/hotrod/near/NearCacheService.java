@@ -23,6 +23,11 @@ import org.infinispan.commons.util.Util;
 
 import java.nio.ByteBuffer;
 
+/**
+ * Near cache service, manages the lifecycle of the near cache.
+ *
+ * @since 7.1
+ */
 public class NearCacheService<K, V> implements NearCache<K, V> {
    private static final Log log = LogFactory.getLog(NearCacheService.class);
 
@@ -48,9 +53,9 @@ public class NearCacheService<K, V> implements NearCache<K, V> {
    }
 
    private Object createListener(RemoteCache<K, V> remote) {
-      return config.mode().eager()
-            ? new EagerNearCacheListener<K, V>(this, remote.getRemoteCacheManager().getMarshaller())
-            : new LazyNearCacheListener<K, V>(this);
+      return config.mode().invalidated()
+            ? new InvalidatedNearCacheListener<K, V>(this)
+            : new EagerNearCacheListener<K, V>(this, remote.getRemoteCacheManager().getMarshaller());
    }
 
    public void stop(RemoteCache<K, V> remote) {
@@ -65,7 +70,7 @@ public class NearCacheService<K, V> implements NearCache<K, V> {
 
    protected NearCache<K, V> createNearCache(NearCacheConfiguration config) {
       return config.maxEntries() > 0
-            ? LinkedMapNearCache.<K, V>create(config)
+            ? BoundedConcurrentMapNearCache.<K, V>create(config)
             : ConcurrentMapNearCache.<K, V>create();
    }
 
@@ -129,14 +134,15 @@ public class NearCacheService<K, V> implements NearCache<K, V> {
    }
 
    @ClientListener
-   private static class LazyNearCacheListener<K, V> {
-      private static final Log log = LogFactory.getLog(LazyNearCacheListener.class);
+   private static class InvalidatedNearCacheListener<K, V> {
+      private static final Log log = LogFactory.getLog(InvalidatedNearCacheListener.class);
       private final NearCache<K, V> cache;
 
-      private LazyNearCacheListener(NearCache<K, V> cache) {
+      private InvalidatedNearCacheListener(NearCache<K, V> cache) {
          this.cache = cache;
       }
 
+      // TODO: Created events should not be fired by the server for near cache, see ISPN-5545
       @ClientCacheEntryCreated
       @SuppressWarnings("unused")
       public void handleCreatedEvent(ClientCacheEntryCreatedEvent<K> event) {
@@ -175,6 +181,7 @@ public class NearCacheService<K, V> implements NearCache<K, V> {
     * classes between client and server, it uses raw data in the converter.
     * This listener does not apply any filtering, so all keys are considered.
     */
+   @Deprecated
    @ClientListener(converterFactoryName = "___eager-key-value-version-converter", useRawData = true)
    private static class EagerNearCacheListener<K, V> {
       private static final Log log = LogFactory.getLog(EagerNearCacheListener.class);

@@ -31,8 +31,8 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
+import org.infinispan.server.commons.subsystem.ClusteringSubsystemTest;
 import org.infinispan.server.endpoint.subsystem.EndpointExtension;
-import org.jboss.as.clustering.subsystem.ClusteringSubsystemTest;
 import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.PathElement;
 import org.jboss.as.subsystem.test.KernelServices;
@@ -63,11 +63,8 @@ public class EndpointSubsystemTestCase extends ClusteringSubsystemTest {
    @Parameters
    public static Collection<Object[]> data() {
       Object[][] data = new Object[][] {
-            { "datagrid-1.0.xml", 7 },
-            { "endpoint-5.2.xml", 7 },
-            { "endpoint-5.3.xml", 9 },
-            { "endpoint-6.0.xml", 9 },
-            { "endpoint-7.0.xml", 16 },
+            { "endpoint-7.2.xml", 16 },
+            { "endpoint-8.0.xml", 16 },
       };
       return Arrays.asList(data);
    }

@@ -33,7 +33,9 @@ public final class BETreeMaker<AttributeId extends Comparable<AttributeId>> {
       List<BENode> nodes = new ArrayList<BENode>();
       List<Integer> treeCounters = new ArrayList<Integer>();
 
-      if (booleanExpr instanceof ConstantBooleanExpr) {
+      if (booleanExpr == null) {
+         treeCounters.add(BETree.EXPR_TRUE);
+      } else if (booleanExpr instanceof ConstantBooleanExpr) {
          treeCounters.add(((ConstantBooleanExpr) booleanExpr).getValue() ? BETree.EXPR_TRUE : BETree.EXPR_FALSE);
       } else {
          preorderTraversal(null, booleanExpr, nodes, treeCounters);
@@ -63,9 +65,9 @@ public final class BETreeMaker<AttributeId extends Comparable<AttributeId>> {
    }
 
    private void makePredicateNode(BENode parent, List<BENode> nodes, List<Integer> treeCounters, PrimaryPredicateExpr condition, boolean isNegated) {
-      List<String> propertyPath = ((PropertyValueExpr) condition.getChild()).getPropertyPath();
-      List<AttributeId> path = metadataAdapter.translatePropertyPath(propertyPath);
-      boolean isRepeated = metadataAdapter.isRepeatedProperty(propertyPath);
+      final PropertyValueExpr pve = (PropertyValueExpr) condition.getChild();
+      final List<AttributeId> path = metadataAdapter.translatePropertyPath(pve.getPropertyPath());
+      final boolean isRepeated = pve.isRepeated();
 
       if (condition instanceof ComparisonExpr) {
          ComparisonExpr expr = (ComparisonExpr) condition;

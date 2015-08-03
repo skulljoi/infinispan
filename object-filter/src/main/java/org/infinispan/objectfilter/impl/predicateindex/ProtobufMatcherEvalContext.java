@@ -4,11 +4,11 @@ import org.infinispan.protostream.MessageContext;
 import org.infinispan.protostream.ProtobufParser;
 import org.infinispan.protostream.SerializationContext;
 import org.infinispan.protostream.TagHandler;
+import org.infinispan.protostream.WrappedMessage;
 import org.infinispan.protostream.descriptors.Descriptor;
 import org.infinispan.protostream.descriptors.FieldDescriptor;
 import org.infinispan.protostream.descriptors.JavaType;
 import org.infinispan.protostream.descriptors.Type;
-import org.infinispan.protostream.impl.WrappedMessageMarshaller;
 
 import java.io.IOException;
 
@@ -16,7 +16,7 @@ import java.io.IOException;
  * @author anistor@redhat.com
  * @since 7.0
  */
-public class ProtobufMatcherEvalContext extends MatcherEvalContext<Descriptor, FieldDescriptor, Integer> implements TagHandler {
+public final class ProtobufMatcherEvalContext extends MatcherEvalContext<Descriptor, FieldDescriptor, Integer> implements TagHandler {
 
    private static final Object DUMMY_VALUE = new Object();
 
@@ -31,8 +31,8 @@ public class ProtobufMatcherEvalContext extends MatcherEvalContext<Descriptor, F
    private final SerializationContext serializationContext;
    private final Descriptor wrappedMessageDescriptor;
 
-   public ProtobufMatcherEvalContext(Object instance, Descriptor wrappedMessageDescriptor, SerializationContext serializationContext) {
-      super(instance);
+   public ProtobufMatcherEvalContext(Object userContext, Object instance, Object eventType, Descriptor wrappedMessageDescriptor, SerializationContext serializationContext) {
+      super(userContext, instance, eventType);
       this.wrappedMessageDescriptor = wrappedMessageDescriptor;
       this.serializationContext = serializationContext;
    }
@@ -67,17 +67,36 @@ public class ProtobufMatcherEvalContext extends MatcherEvalContext<Descriptor, F
          }
       } else {
          switch (fieldNumber) {
-            case WrappedMessageMarshaller.WRAPPED_DESCRIPTOR_FULL_NAME:
+            case WrappedMessage.WRAPPED_DESCRIPTOR_FULL_NAME:
                entityTypeName = (String) tagValue;
                break;
 
-            case WrappedMessageMarshaller.WRAPPED_DESCRIPTOR_ID:
+            case WrappedMessage.WRAPPED_DESCRIPTOR_ID:
                entityTypeName = serializationContext.getTypeNameById((Integer) tagValue);
                break;
 
-            case WrappedMessageMarshaller.WRAPPED_MESSAGE_BYTES:
+            case WrappedMessage.WRAPPED_MESSAGE_BYTES:
                payload = (byte[]) tagValue;
                break;
+
+            case WrappedMessage.WRAPPED_DOUBLE:
+            case WrappedMessage.WRAPPED_FLOAT:
+            case WrappedMessage.WRAPPED_INT64:
+            case WrappedMessage.WRAPPED_UINT64:
+            case WrappedMessage.WRAPPED_INT32:
+            case WrappedMessage.WRAPPED_FIXED64:
+            case WrappedMessage.WRAPPED_FIXED32:
+            case WrappedMessage.WRAPPED_BOOL:
+            case WrappedMessage.WRAPPED_STRING:
+            case WrappedMessage.WRAPPED_BYTES:
+            case WrappedMessage.WRAPPED_UINT32:
+            case WrappedMessage.WRAPPED_SFIXED32:
+            case WrappedMessage.WRAPPED_SFIXED64:
+            case WrappedMessage.WRAPPED_SINT32:
+            case WrappedMessage.WRAPPED_SINT64:
+            case WrappedMessage.WRAPPED_ENUM:
+               break;
+            // this is a primitive value, which we ignore for now due to lack of support for querying primitives
 
             default:
                throw new IllegalStateException("Unexpected field : " + fieldNumber);
@@ -101,7 +120,7 @@ public class ProtobufMatcherEvalContext extends MatcherEvalContext<Descriptor, F
          // found an uninteresting nesting level, start skipping from here on until this level ends
          skipping++;
       } else {
-         throw new IllegalStateException("No nested message is expected");
+         throw new IllegalStateException("No nested message is supported");
       }
    }
 
@@ -115,7 +134,7 @@ public class ProtobufMatcherEvalContext extends MatcherEvalContext<Descriptor, F
             skipping--;
          }
       } else {
-         throw new IllegalStateException("No nested message is expected");
+         throw new IllegalStateException("No nested message is supported");
       }
    }
 

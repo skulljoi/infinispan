@@ -9,6 +9,7 @@ import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.modifications.Modification;
 import org.infinispan.persistence.modifications.Remove;
 import org.infinispan.persistence.modifications.Store;
+import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.persistence.spi.CacheWriter;
 import org.infinispan.persistence.spi.InitializationContext;
@@ -64,12 +65,13 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
    private ExecutorService executor;
    private Thread coordinator;
    private int concurrencyLevel;
-   private long shutdownTimeout;
    private String cacheName;
 
    protected BufferLock stateLock;
    @GuardedBy("stateLock")
    protected final AtomicReference<State> state = new AtomicReference<State>();
+   @GuardedBy("stateLock")
+   private boolean stopped;
 
    protected AsyncStoreConfiguration asyncConfiguration;
 
@@ -85,28 +87,20 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
       Cache cache = ctx.getCache();
       Configuration cacheCfg = cache != null ? cache.getCacheConfiguration() : null;
       concurrencyLevel = cacheCfg != null ? cacheCfg.locking().concurrencyLevel() : 16;
-      long cacheStopTimeout = cacheCfg != null ? cacheCfg.transaction().cacheStopTimeout() : 30000;
-      Long configuredAsyncStopTimeout = this.asyncConfiguration.shutdownTimeout();
       cacheName = cache != null ? cache.getName() : null;
-
-      // Async store shutdown timeout cannot be bigger than
-      // the overall cache stop timeout, so limit it accordingly.
-      if (configuredAsyncStopTimeout >= cacheStopTimeout) {
-         shutdownTimeout = Math.round(cacheStopTimeout * 0.90);
-         log.asyncStoreShutdownTimeoutTooHigh(configuredAsyncStopTimeout, cacheStopTimeout, shutdownTimeout);
-      } else {
-         shutdownTimeout = configuredAsyncStopTimeout;
-      }
    }
 
    @Override
    public void start() {
       log.debugf("Async cache loader starting %s", this);
       state.set(newState(false, null));
+      stopped = false;
       stateLock = new BufferLock(asyncConfiguration.modificationQueueSize());
 
+      // Create a thread pool with unbounded work queue, so that all work is accepted and eventually
+      // executed. A bounded queue could throw RejectedExecutionException and thus lose data.
       int poolSize = asyncConfiguration.threadPoolSize();
-      executor = new ThreadPoolExecutor(0, poolSize, 120L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(),
+      executor = new ThreadPoolExecutor(poolSize, poolSize, 120L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(),
                                         new ThreadFactory() {
                                            @Override
                                            public Thread newThread(Runnable r) {
@@ -115,6 +109,7 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
                                               return t;
                                            }
                                         });
+      ((ThreadPoolExecutor) executor).allowCoreThreadTimeOut(true);
       coordinator = new Thread(new AsyncStoreCoordinator(), "AsyncStoreCoordinator-" + cacheName);
       coordinator.setDaemon(true);
       coordinator.start();
@@ -123,12 +118,21 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
    @Override
    public void stop() {
       if (trace) log.tracef("Stop async store %s", this);
-      stateLock.writeLock(1);
-      state.get().stopped = true;
+      stateLock.writeLock(0);
+      stopped = true;
       stateLock.writeUnlock();
       try {
-         coordinator.join(shutdownTimeout);
-         if (coordinator.isAlive())
+         // It is safe to wait without timeout because the thread pool uses an unbounded work queue (i.e.
+         // all work handed to the pool will be accepted and eventually executed) and AsyncStoreProcessors
+         // decrement the workerThreads latch in a finally block (i.e. even if the back-end store throws
+         // java.lang.Error). The coordinator thread can only block forever if the back-end's write() /
+         // remove() methods block, but this is no different from PassivationManager.stop() being blocked
+         // in a synchronous call to write() / remove().
+         coordinator.join();
+         // The coordinator thread waits for AsyncStoreProcessor threads to count down their latch (nearly
+         // at the end). Thus the threads should have terminated or terminate instantly.
+         executor.shutdown();
+         if (!executor.awaitTermination(1, TimeUnit.SECONDS))
             log.errorAsyncStoreNotStopped();
       } catch (InterruptedException e) {
          log.interruptedWaitingAsyncStorePush(e);
@@ -163,9 +167,14 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
    }
 
 
-   State newState(boolean clear, State next) {
+   protected State newState(boolean clear, State next) {
       ConcurrentMap<Object, Modification> map = CollectionFactory.makeConcurrentMap(64, concurrencyLevel);
       return new State(clear, map, next);
+   }
+
+   void assertNotStopped() throws CacheException {
+      if (stopped)
+         throw new CacheException("AsyncCacheWriter stopped; no longer accepting more entries.");
    }
 
    private void put(Modification mod, int count) {
@@ -174,6 +183,7 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
          if (log.isTraceEnabled())
             log.tracef("Queue modification: %s", mod);
 
+         assertNotStopped();
          state.get().put(mod);
       } finally {
          stateLock.writeUnlock();
@@ -184,6 +194,10 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
       return state;
    }
 
+   protected void clearStore() {
+      // No-op, not supported for async
+   }
+
    private class AsyncStoreCoordinator implements Runnable {
 
       @Override
@@ -191,15 +205,12 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
          LogFactory.pushNDC(cacheName, trace);
          try {
             for (;;) {
-               State s, head, tail;
-               s = state.get();
-               if (shouldStop(s)) {
-                  return;
-               }
-
+               final State s, head, tail;
+               final boolean shouldStop;
                stateLock.readLock();
                try {
                   s = state.get();
+                  shouldStop = stopped;
                   tail = s.next;
                   assert tail == null || tail.next == null : "State chain longer than 3 entries!";
                   head = newState(false, s);
@@ -213,88 +224,75 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
                   if (s.clear) {
                      // clear() must be called synchronously, wait until background threads are done
                      if (tail != null)
-                        workerThreadsAwait(tail.workerThreads);
+                        tail.workerThreads.await();
+
+                     clearStore();
                   }
 
-                  List<Modification> mods;
-                  if (tail != null) {
-                     // if there's work in progress, push-back keys that are still in use to the head state
-                     mods = new ArrayList<Modification>();
+                  final List<Modification> mods = new ArrayList<>(s.modifications.size());
+                  final List<Modification> deferredMods = new ArrayList<>();
+                  if (tail != null && tail.workerThreads.getCount() > 0) {
+                     // sort out modifications that are still in use by tail's AsyncStoreProcessors
                      for (Map.Entry<Object, Modification> e : s.modifications.entrySet()) {
                         if (!tail.modifications.containsKey(e.getKey()))
                            mods.add(e.getValue());
-                        else {
-                           if (!head.clear && head.modifications.putIfAbsent(e.getKey(), e.getValue()) == null)
-                              stateLock.add(1);
-                           s.modifications.remove(e.getKey());
-                        }
+                        else
+                           deferredMods.add(e.getValue());
                      }
                   } else {
-                     mods = new ArrayList<Modification>(s.modifications.values());
+                     mods.addAll(s.modifications.values());
                   }
 
-                  // distribute modifications evenly across worker threads
-                  int threads = Math.min(mods.size(), asyncConfiguration.threadPoolSize());
-                  s.workerThreads = new CountDownLatch(threads);
-                  if (threads > 0) {
-                     // schedule background threads
-                     int start = 0;
-                     int quotient = mods.size() / threads;
-                     int remainder = mods.size() % threads;
-                     for (int i = 0; i < threads; i++) {
-                        int end = start + quotient + (i < remainder ? 1 : 0);
-                        executor.execute(new AsyncStoreProcessor(mods.subList(start, end), s));
-                        start = end;
-                     }
-                     assert start == mods.size() : "Thread distribution is broken!";
-                  }
+                  // create AsyncStoreProcessors
+                  final List<AsyncStoreProcessor> procs = createProcessors(s, mods);
+                  final List<AsyncStoreProcessor> deferredProcs = createProcessors(s, deferredMods);
+                  s.workerThreads = new CountDownLatch(procs.size() + deferredProcs.size());
+
+                  // schedule AsyncStoreProcessors that don't conflict with tail's processors
+                  for (AsyncStoreProcessor processor : procs)
+                     executor.execute(processor);
 
                   // wait until background threads of previous round are done
                   if (tail != null) {
-                     workerThreadsAwait(tail.workerThreads);
+                     tail.workerThreads.await();
                      s.next = null;
                   }
 
+                  // schedule remaining AsyncStoreProcessors
+                  for (AsyncStoreProcessor processor : deferredProcs)
+                     executor.execute(processor);
+
                   // if this is the last state to process, wait for background threads, then quit
-                  if (shouldStop(s)) {
-                     workerThreadsAwait(s.workerThreads);
+                  if (shouldStop) {
+                     s.workerThreads.await();
                      return;
                   }
-               } catch (InterruptedException e) {
-                  log.asyncStoreCoordinatorInterrupted(e);
-                  Thread.currentThread().interrupt();
                } catch (Exception e) {
                   log.unexpectedErrorInAsyncStoreCoordinator(e);
                }
             }
          } finally {
-            try {
-               // Wait for existing workers to finish
-               boolean workersTerminated = false;
-               try {
-                  executor.shutdown();
-                  workersTerminated = executor.awaitTermination(shutdownTimeout, TimeUnit.MILLISECONDS);
-               } catch (InterruptedException e) {
-                  Thread.currentThread().interrupt();
-               }
-               if (!workersTerminated) {
-                  // if the worker threads did not finish cleanly in the allotted time then we try to interrupt them to shut down
-                  executor.shutdownNow();
-               }
-            } finally {
-               LogFactory.popNDC(trace);
-            }
+            LogFactory.popNDC(trace);
          }
       }
 
-      private boolean shouldStop(State s) {
-         return s.stopped && s.modifications.isEmpty();
-      }
-
-      private void workerThreadsAwait(CountDownLatch latch) throws InterruptedException {
-         boolean await = latch.await(shutdownTimeout, TimeUnit.MILLISECONDS);
-         if (!await)
-            throw log.waitingForWorkerThreadsFailed(latch);
+      private List<AsyncStoreProcessor> createProcessors(State state, List<Modification> mods) {
+         List<AsyncStoreProcessor> result = new ArrayList<>();
+         // distribute modifications evenly across worker threads
+         int threads = Math.min(mods.size(), asyncConfiguration.threadPoolSize());
+         if (threads > 0) {
+            // create background threads
+            int start = 0;
+            int quotient = mods.size() / threads;
+            int remainder = mods.size() % threads;
+            for (int i = 0; i < threads; i++) {
+               int end = start + quotient + (i < remainder ? 1 : 0);
+               result.add(new AsyncStoreProcessor(mods.subList(start, end), state));
+               start = end;
+            }
+            assert start == mods.size() : "Thread distribution is broken!";
+         }
+         return result;
       }
    }
 
@@ -309,15 +307,18 @@ public class AsyncCacheWriter extends DelegatingCacheWriter {
 
       @Override
       public void run() {
-         // try 3 times to store the modifications
-         retryWork(3);
+         try {
+            // try 3 times to store the modifications
+            retryWork(3);
 
-         // decrement active worker threads and disconnect myState if this was the last one
-         myState.workerThreads.countDown();
-         if (myState.workerThreads.getCount() == 0)
-            for (State s = state.get(); s != null; s = s.next)
-               if (s.next == myState)
-                  s.next = null;
+         } finally {
+            // decrement active worker threads and disconnect myState if this was the last one
+            myState.workerThreads.countDown();
+            if (myState.workerThreads.getCount() == 0 && myState.next == null)
+               for (State s = state.get(); s != null; s = s.next)
+                  if (s.next == myState)
+                     s.next = null;
+         }
       }
 
       private void retryWork(int maxRetries) {

@@ -13,6 +13,7 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.server.core.CacheValue;
+import org.infinispan.server.hotrod.test.HotRodTestingUtil;
 import org.infinispan.server.memcached.MemcachedServer;
 import org.infinispan.server.memcached.test.MemcachedTestingUtil;
 import org.infinispan.test.SingleCacheManagerTest;
@@ -27,7 +28,7 @@ import org.testng.annotations.Test;
  * @author Tristan Tarrant
  * @since 5.2
  */
-@Test(testName = "cli-server.MemcachedEncodingTest", groups = "unstable", description = "original group: functional")
+@Test(testName = "cli.interpreter.MemcachedEncodingTest", groups = "unstable", description = "original group: functional")
 @CleanupAfterMethod
 public class MemcachedEncodingTest extends SingleCacheManagerTest {
 
@@ -52,13 +53,9 @@ public class MemcachedEncodingTest extends SingleCacheManagerTest {
 
    @AfterMethod
    public void release() {
-      try {
-         memcachedServer.stop();
-         TestingUtil.killCacheManagers(cacheManager);
-         memcachedClient.shutdown();
-      } catch (Exception e) {
-         e.printStackTrace();
-      }
+      MemcachedTestingUtil.killMemcachedServer(memcachedServer);
+      TestingUtil.killCacheManagers(cacheManager);
+      MemcachedTestingUtil.killMemcachedClient(memcachedClient);
    }
    /* TODO: convert to new encoding
    public void testMemcachedCodec() throws Exception {

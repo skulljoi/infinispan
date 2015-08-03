@@ -48,6 +48,11 @@ abstract class AbstractGlobalConfigurationBuilder implements GlobalConfiguration
       return globalConfig.persistenceExecutor();
    }
 
+   /**
+    * @deprecated This method always returns {@code null} now.
+    * Set thread pool via {@link TransportConfigurationBuilder#transportThreadPool()} instead.
+    */
+   @Deprecated
    @Override
    public ExecutorFactoryConfigurationBuilder asyncTransportExecutor() {
       return globalConfig.asyncTransportExecutor();
@@ -89,18 +94,34 @@ abstract class AbstractGlobalConfigurationBuilder implements GlobalConfiguration
    }
 
    @Override
+   public ThreadPoolConfigurationBuilder asyncThreadPool() {
+      return globalConfig.asyncThreadPool();
+   }
+
+   @Override
    public ThreadPoolConfigurationBuilder replicationQueueThreadPool() {
       return globalConfig.replicationQueueThreadPool();
    }
 
+   @Deprecated
    @Override
    public ThreadPoolConfigurationBuilder evictionThreadPool() {
-      return globalConfig.evictionThreadPool();
+      return globalConfig.expirationThreadPool();
+   }
+
+   @Override
+   public ThreadPoolConfigurationBuilder expirationThreadPool() {
+      return globalConfig.expirationThreadPool();
    }
 
    @Override
    public ThreadPoolConfigurationBuilder persistenceThreadPool() {
       return globalConfig.persistenceThreadPool();
+   }
+
+   @Override
+   public ThreadPoolConfigurationBuilder stateTransferThreadPool() {
+      return globalConfig.stateTransferThreadPool();
    }
 
    @Override

@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>7.1.1-SNAPSHOT</version>
+      <version>8.0.0-SNAPSHOT</version>
       <relativePath>../../parent/pom.xml</relativePath>
    </parent>
 
@@ -16,17 +16,6 @@
 
    <profiles>
       <profile>
-         <id>disable-osgi-tests</id>
-         <activation>
-            <activeByDefault>false</activeByDefault>
-            
-            <jdk>[1.8,1.9]</jdk>
-         </activation>
-         <properties>
-            <skipOSGiTests>true</skipOSGiTests>
-         </properties>
-      </profile>
-      <profile>
          <id>smoke</id>
          <properties>
             <skipOSGiTests>true</skipOSGiTests>
@@ -35,6 +24,11 @@
    </profiles>
 
    <dependencies>
+      <dependency>
+         <groupId>org.apache.logging.log4j</groupId>
+         <artifactId>log4j-slf4j-impl</artifactId>
+         <scope>test</scope>
+      </dependency>
       <dependency>
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-commons</artifactId>

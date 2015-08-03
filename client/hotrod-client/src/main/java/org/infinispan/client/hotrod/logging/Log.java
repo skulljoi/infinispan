@@ -17,6 +17,7 @@ import java.lang.reflect.Method;
 import java.net.SocketAddress;
 import java.util.List;
 import java.util.Collection;
+import java.util.NoSuchElementException;
 import java.util.Set;
 
 import static org.jboss.logging.Logger.Level.*;
@@ -183,4 +184,21 @@ public interface Log extends BasicLogger {
    @LogMessage(level = ERROR)
    @Message(value = "Unable to read %s bytes %s", id = 4044)
    void unableToUnmarshallBytesError(String element, String bytes, @Cause Exception e);
+
+   @Message(value = "When enabling near caching, number of max entries must be configured", id = 4045)
+   CacheConfigurationException nearCacheMaxEntriesUndefined();
+
+   @LogMessage(level = INFO)
+   @Message(value = "Successfully closed remote iterator '%s'", id = 4046)
+   void iterationClosed(String iterationId);
+
+   @Message(value = "Invalid iteration id '%s'", id = 4047)
+   IllegalStateException errorClosingIteration(String iterationId);
+
+   @Message(value = "Invalid iteration id '%s'", id = 4048)
+   NoSuchElementException errorRetrievingNext(String iterationId);
+
+   @LogMessage(level = WARN)
+   @Message(value = "No consistent hash is available in the client, starting iteration using the configured request balancing strategy", id = 4049)
+   void noConsistentHashAvailable();
 }

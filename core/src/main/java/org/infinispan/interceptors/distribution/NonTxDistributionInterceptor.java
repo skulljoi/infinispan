@@ -5,21 +5,38 @@ import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.RemoteFetchingCommand;
-import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commons.CacheException;
+import org.infinispan.commons.util.concurrent.CompositeNotifyingFuture;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.distribution.ch.ConsistentHash;
+import org.infinispan.distribution.util.ReadOnlySegmentAwareMap;
+import org.infinispan.remoting.RemoteException;
+import org.infinispan.remoting.responses.Response;
+import org.infinispan.remoting.rpc.RpcOptions;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.remoting.transport.jgroups.SuspectException;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Non-transactional interceptor used by distributed caches that support concurrent writes.
@@ -43,24 +60,12 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
 
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
-      try {
-         return visitRemoteFetchingCommand(ctx, command, false);
-      }
-      catch (SuspectException e) {
-         //retry
-         return visitGetKeyValueCommand(ctx, command);
-      }
+      return visitRemoteFetchingCommand(ctx, command, false);
    }
 
    @Override
    public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
-      try {
-         return visitRemoteFetchingCommand(ctx, command, true);
-      }
-      catch (SuspectException e) {
-         //retry
-         return visitGetCacheEntryCommand(ctx, command);
-      }
+      return visitRemoteFetchingCommand(ctx, command, true);
    }
 
    private <T extends AbstractDataCommand & RemoteFetchingCommand> Object visitRemoteFetchingCommand(InvocationContext ctx, T command, boolean returnEntry) throws Throwable {
@@ -69,20 +74,20 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
          Object key = command.getKey();
          if (needsRemoteGet(ctx, command)) {
             InternalCacheEntry remoteEntry = remoteGetCacheEntry(ctx, key, command);
-            returnValue = computeGetReturn(remoteEntry, command, returnEntry);
+            returnValue = computeGetReturn(remoteEntry, returnEntry);
          }
          if (returnValue == null) {
             InternalCacheEntry localEntry = fetchValueLocallyIfAvailable(dm.getReadConsistentHash(), key);
             if (localEntry != null) {
                wrapInternalCacheEntry(localEntry, ctx, key, false, command);
             }
-            returnValue = computeGetReturn(localEntry, command, returnEntry);
+            returnValue = computeGetReturn(localEntry, returnEntry);
          }
       }
       return returnValue;
    }
 
-   private Object computeGetReturn(InternalCacheEntry entry, AbstractDataCommand command, boolean returnEntry) {
+   private Object computeGetReturn(InternalCacheEntry entry, boolean returnEntry) {
       if (!returnEntry && entry != null)
          return entry.getValue();
       return entry;
@@ -95,31 +100,94 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
 
    @Override
    public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
+      Map<Object, Object> originalMap = command.getMap();
+      ConsistentHash ch = dm.getConsistentHash();
+      Address localAddress = rpcManager.getAddress();
       if (ctx.isOriginLocal()) {
-         Set<Address> primaryOwners = new HashSet<Address>(command.getAffectedKeys().size());
-         for (Object k : command.getAffectedKeys()) {
-            primaryOwners.add(cdl.getPrimaryOwner(k));
+         List<CompletableFuture<Map<Address, Response>>> futures = new ArrayList<>(
+               rpcManager.getMembers().size() - 1);
+         // TODO: if async we don't need to do futures...
+         RpcOptions options = rpcManager.getDefaultRpcOptions(isSynchronous(command));
+         for (Address member : rpcManager.getMembers()) {
+            if (member.equals(rpcManager.getAddress())) {
+               continue;
+            }
+            Set<Integer> segments = ch.getPrimarySegmentsForOwner(member);
+            if (!segments.isEmpty()) {
+               Map<Object, Object> segmentEntriesMap =
+                     new ReadOnlySegmentAwareMap<>(originalMap, ch, segments);
+               if (!segmentEntriesMap.isEmpty()) {
+                  PutMapCommand copy = new PutMapCommand(command);
+                  copy.setMap(segmentEntriesMap);
+                  CompletableFuture<Map<Address, Response>> future = rpcManager.invokeRemotelyAsync(
+                        Collections.singletonList(member), copy, options);
+                  futures.add(future);
+               }
+            }
          }
-         primaryOwners.remove(rpcManager.getAddress());
-         if (!primaryOwners.isEmpty()) {
-            rpcManager.invokeRemotely(primaryOwners, command, rpcManager.getDefaultRpcOptions(isSynchronous(command)));
+         if (futures.size() > 0) {
+            CompletableFuture[] futuresArray = new CompletableFuture[futures.size()];
+            CompletableFuture<Void> compFuture = CompletableFuture.allOf(futures.toArray(futuresArray));
+            try {
+               compFuture.get(options.timeout(), TimeUnit.MILLISECONDS);
+            } catch (ExecutionException e) {
+               throw new RemoteException("Exception while processing put on primary owner", e.getCause());
+            } catch (TimeoutException e) {
+               throw new CacheException(e);
+            }
          }
       }
 
-      if (!command.isForwarded()) {
-         //I need to forward this to all the nodes that are secondary owners
-         Set<Object> keysIOwn = new HashSet<Object>(command.getAffectedKeys().size());
-         for (Object k : command.getAffectedKeys()) {
-            if (cdl.localNodeIsPrimaryOwner(k)) {
-               keysIOwn.add(k);
+      if (!command.isForwarded() && ch.getNumOwners() > 1) {
+         // Now we find all the segments that we own and map our backups to those
+         Map<Address, Set<Integer>> backupOwnerSegments = new HashMap<>();
+         int segmentCount = ch.getNumSegments();
+         for (int i = 0; i < segmentCount; ++i) {
+            Iterator<Address> iter = ch.locateOwnersForSegment(i).iterator();
+
+            if (iter.next().equals(localAddress)) {
+               while (iter.hasNext()) {
+                  Address backupOwner = iter.next();
+                  Set<Integer> segments = backupOwnerSegments.get(backupOwner);
+                  if (segments == null) {
+                     backupOwnerSegments.put(backupOwner, (segments = new HashSet<>()));
+                  }
+                  segments.add(i);
+               }
             }
          }
-         Collection<Address> backupOwners = cdl.getOwners(keysIOwn);
-         if (backupOwners == null || !backupOwners.isEmpty()) {
+
+         int backupOwnerSize = backupOwnerSegments.size();
+         if (backupOwnerSize > 0) {
+            List<CompletableFuture<Map<Address, Response>>> futures = new ArrayList<>(backupOwnerSize);
+            RpcOptions options = rpcManager.getDefaultRpcOptions(isSynchronous(command));
             command.setFlags(Flag.SKIP_LOCKING);
             command.setForwarded(true);
-            rpcManager.invokeRemotely(backupOwners, command, rpcManager.getDefaultRpcOptions(isSynchronous(command)));
+
+            for (Entry<Address, Set<Integer>> entry : backupOwnerSegments.entrySet()) {
+               Set<Integer> segments = entry.getValue();
+               Map<Object, Object> segmentEntriesMap = 
+                     new ReadOnlySegmentAwareMap<>(originalMap, ch, segments);
+               if (!segmentEntriesMap.isEmpty()) {
+                  PutMapCommand copy = new PutMapCommand(command);
+                  copy.setMap(segmentEntriesMap);
+                  CompletableFuture<Map<Address, Response>> future = rpcManager.invokeRemotelyAsync(
+                        Collections.singletonList(entry.getKey()), copy, options);
+                  futures.add(future);
+               }
+            }
             command.setForwarded(false);
+            if (futures.size() > 0) {
+               CompletableFuture[] futuresArray = new CompletableFuture[futures.size()];
+               CompletableFuture<Void> compFuture = CompletableFuture.allOf(futures.toArray(futuresArray));
+               try {
+                  compFuture.get(options.timeout(), TimeUnit.MILLISECONDS);
+               } catch (ExecutionException e) {
+                  throw new RemoteException("Exception while processing put on backup owner", e.getCause());
+               } catch (TimeoutException e) {
+                  throw new CacheException(e);
+               }
+            }
          }
       }
 
@@ -136,24 +204,11 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
       return handleNonTxWriteCommand(ctx, command);
    }
 
-   /**
-    * Don't forward in the case of clear commands, just acquire local locks and broadcast.
-    */
-   @Override
-   public Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
-      if (ctx.isOriginLocal() && !isLocalModeForced(command)) {
-         rpcManager.invokeRemotely(null, command, rpcManager.getDefaultRpcOptions(isSynchronous(command)));
-      }
-      return invokeNextInterceptor(ctx, command);
-   }
-
-   protected void remoteGetBeforeWrite(InvocationContext ctx, WriteCommand command, RecipientGenerator keygen) throws Throwable {
-      for (Object k : keygen.getKeys()) {
-         if (cdl.localNodeIsPrimaryOwner(k)) {
-            // Then it makes sense to try a local get and wrap again. This will compensate the fact the the entry was not local
-            // earlier when the EntryWrappingInterceptor executed during current invocation context but it should be now.
-            localGetCacheEntry(ctx, k, true, command);
-         }
+   protected void remoteGetBeforeWrite(InvocationContext ctx, WriteCommand command, Object key) throws Throwable {
+      if (cdl.localNodeIsPrimaryOwner(key)) {
+         // Then it makes sense to try a local get and wrap again. This will compensate the fact the the entry was not local
+         // earlier when the EntryWrappingInterceptor executed during current invocation context but it should be now.
+         localGetCacheEntry(ctx, key, true, command);
       }
    }
 

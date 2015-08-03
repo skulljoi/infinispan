@@ -8,20 +8,27 @@ import java.util.List;
  * @author anistor@redhat.com
  * @since 7.0
  */
-public final class PropertyValueExpr implements ValueExpr {
+public class PropertyValueExpr implements ValueExpr {
 
-   private final List<String> propertyPath;
+   protected final List<String> propertyPath;
 
-   public PropertyValueExpr(List<String> propertyPath) {
+   protected final boolean isRepeated;
+
+   public PropertyValueExpr(List<String> propertyPath, boolean isRepeated) {
       this.propertyPath = propertyPath;
+      this.isRepeated = isRepeated;
    }
 
-   public PropertyValueExpr(String propertyPath) {
-      this(StringHelper.splitPropertyPath(propertyPath));
+   public PropertyValueExpr(String propertyPath, boolean isRepeated) {
+      this(StringHelper.splitPropertyPath(propertyPath), isRepeated);
    }
 
    public List<String> getPropertyPath() {
       return propertyPath;
+   }
+
+   public boolean isRepeated() {
+      return isRepeated;
    }
 
    @Override
@@ -30,7 +37,50 @@ public final class PropertyValueExpr implements ValueExpr {
    }
 
    @Override
+   public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+      PropertyValueExpr other = (PropertyValueExpr) o;
+      return propertyPath.equals(other.propertyPath);
+   }
+
+   @Override
+   public int hashCode() {
+      return propertyPath.hashCode();
+   }
+
+   @Override
    public String toString() {
-      return "PropertyValueExpr(" + propertyPath + ')';
+      StringBuilder sb = new StringBuilder();
+      sb.append("PROP(");
+      boolean isFirst = true;
+      for (String p : propertyPath) {
+         if (isFirst) {
+            isFirst = false;
+         } else {
+            sb.append(',');
+         }
+         sb.append(p);
+      }
+      if (isRepeated) {
+         sb.append('*');
+      }
+      sb.append(')');
+      return sb.toString();
+   }
+
+   @Override
+   public String toJpaString() {
+      StringBuilder sb = new StringBuilder();
+      boolean isFirst = true;
+      for (String p : propertyPath) {
+         if (isFirst) {
+            isFirst = false;
+         } else {
+            sb.append('.');
+         }
+         sb.append(p);
+      }
+      return sb.toString();
    }
 }

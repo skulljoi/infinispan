@@ -17,10 +17,13 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CountedCompleter;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.*;
 
 /**
  * A hash table supporting full concurrency of retrievals and
@@ -246,39 +249,10 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
       long estimateSize();
 
       /** Applies the action to each untraversed element */
-      void forEachRemaining(Action<? super T> action);
+      void forEachRemaining(Consumer<? super T> action);
       /** If an element remains, applies the action and returns true. */
-      boolean tryAdvance(Action<? super T> action);
+      boolean tryAdvance(Consumer<? super T> action);
    }
-
-   // Sams
-   /** Interface describing a void action of one argument */
-   public interface Action<A> { void apply(A a); }
-   /** Interface describing a void action of two arguments */
-   public interface BiAction<A,B> { void apply(A a, B b); }
-   /** Interface describing a function of one argument */
-   public interface Fun<A,T> { T apply(A a); }
-   /** Interface describing a function of two arguments */
-   public interface BiFun<A,B,T> { T apply(A a, B b); }
-   /** Interface describing a function mapping its argument to a double */
-   public interface ObjectToDouble<A> { double apply(A a); }
-   /** Interface describing a function mapping its argument to a long */
-   public interface ObjectToLong<A> { long apply(A a); }
-   /** Interface describing a function mapping its argument to an int */
-   public interface ObjectToInt<A> {int apply(A a); }
-   /** Interface describing a function mapping two arguments to a double */
-   public interface ObjectByObjectToDouble<A,B> { double apply(A a, B b); }
-   /** Interface describing a function mapping two arguments to a long */
-   public interface ObjectByObjectToLong<A,B> { long apply(A a, B b); }
-   /** Interface describing a function mapping two arguments to an int */
-   public interface ObjectByObjectToInt<A,B> {int apply(A a, B b); }
-   /** Interface describing a function mapping two doubles to a double */
-   public interface DoubleByDoubleToDouble { double apply(double a, double b); }
-   /** Interface describing a function mapping two longs to a long */
-   public interface LongByLongToLong { long apply(long a, long b); }
-   /** Interface describing a function mapping two ints to an int */
-   public interface IntByIntToInt { int apply(int a, int b); }
-
 
     /*
      * Overview:
@@ -1634,18 +1608,18 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
       return (v = get(key)) == null ? defaultValue : v;
    }
 
-   public void forEach(BiAction<? super K, ? super V> action) {
+   public void forEach(BiConsumer<? super K, ? super V> action) {
       if (action == null) throw new NullPointerException();
       Node<K,V>[] t;
       if ((t = table) != null) {
          Traverser<K,V> it = new Traverser<K,V>(t, t.length, 0, t.length);
          for (Node<K,V> p; (p = it.advance()) != null; ) {
-            action.apply(p.key, p.val);
+            action.accept(p.key, p.val);
          }
       }
    }
 
-   public void replaceAll(BiFun<? super K, ? super V, ? extends V> function) {
+   public void replaceAll(BiFunction<? super K, ? super V, ? extends V> function) {
       if (function == null) throw new NullPointerException();
       Node<K,V>[] t;
       if ((t = table) != null) {
@@ -1686,7 +1660,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @throws RuntimeException or Error if the mappingFunction does so,
     *         in which case the mapping is left unestablished
     */
-   public V computeIfAbsent(K key, Fun<? super K, ? extends V> mappingFunction) {
+   public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
       if (key == null || mappingFunction == null)
          throw new NullPointerException();
       int h = spread(keyEq.hashCode(key)); // EQUIVALENCE_MOD
@@ -1787,7 +1761,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @throws RuntimeException or Error if the remappingFunction does so,
     *         in which case the mapping is unchanged
     */
-   public V computeIfPresent(K key, BiFun<? super K, ? super V, ? extends V> remappingFunction) {
+   public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
       if (key == null || remappingFunction == null)
          throw new NullPointerException();
       int h = spread(keyEq.hashCode(key)); // EQUIVALENCE_MOD
@@ -1878,7 +1852,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     *         in which case the mapping is unchanged
     */
    public V compute(K key,
-         BiFun<? super K, ? super V, ? extends V> remappingFunction) {
+         BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
       if (key == null || remappingFunction == null)
          throw new NullPointerException();
       int h = spread(keyEq.hashCode(key)); // EQUIVALENCE_MOD
@@ -2003,7 +1977,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @throws RuntimeException or Error if the remappingFunction does so,
     *         in which case the mapping is unchanged
     */
-   public V merge(K key, V value, BiFun<? super V, ? super V, ? extends V> remappingFunction) {
+   public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
       if (key == null || value == null || remappingFunction == null)
          throw new NullPointerException();
       int h = spread(keyEq.hashCode(key));
@@ -3469,18 +3443,18 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      f, est >>>= 1);
       }
 
-      public void forEachRemaining(Action<? super K> action) {
+      public void forEachRemaining(Consumer<? super K> action) {
          if (action == null) throw new NullPointerException();
          for (Node<K,V> p; (p = advance()) != null;)
-            action.apply(p.key);
+            action.accept(p.key);
       }
 
-      public boolean tryAdvance(Action<? super K> action) {
+      public boolean tryAdvance(Consumer<? super K> action) {
          if (action == null) throw new NullPointerException();
          Node<K,V> p;
          if ((p = advance()) == null)
             return false;
-         action.apply(p.key);
+         action.accept(p.key);
          return true;
       }
 
@@ -3504,18 +3478,18 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      f, est >>>= 1);
       }
 
-      public void forEachRemaining(Action<? super V> action) {
+      public void forEachRemaining(Consumer<? super V> action) {
          if (action == null) throw new NullPointerException();
          for (Node<K,V> p; (p = advance()) != null;)
-            action.apply(p.val);
+            action.accept(p.val);
       }
 
-      public boolean tryAdvance(Action<? super V> action) {
+      public boolean tryAdvance(Consumer<? super V> action) {
          if (action == null) throw new NullPointerException();
          Node<K,V> p;
          if ((p = advance()) == null)
             return false;
-         action.apply(p.val);
+         action.accept(p.val);
          return true;
       }
 
@@ -3541,18 +3515,18 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      f, est >>>= 1, map);
       }
 
-      public void forEachRemaining(Action<? super Map.Entry<K,V>> action) {
+      public void forEachRemaining(Consumer<? super Entry<K,V>> action) {
          if (action == null) throw new NullPointerException();
          for (Node<K,V> p; (p = advance()) != null; )
-            action.apply(new MapEntry<K,V>(p.key, p.val, map));
+            action.accept(new MapEntry<K, V>(p.key, p.val, map));
       }
 
-      public boolean tryAdvance(Action<? super Map.Entry<K,V>> action) {
+      public boolean tryAdvance(Consumer<? super Map.Entry<K,V>> action) {
          if (action == null) throw new NullPointerException();
          Node<K,V> p;
          if ((p = advance()) == null)
             return false;
-         action.apply(new MapEntry<K,V>(p.key, p.val, map));
+         action.accept(new MapEntry<K, V>(p.key, p.val, map));
          return true;
       }
 
@@ -3587,7 +3561,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public void forEach(long parallelismThreshold,
-         BiAction<? super K,? super V> action) {
+         BiConsumer<? super K,? super V> action) {
       if (action == null) throw new NullPointerException();
       new ForEachMappingTask<K,V>
             (null, batchFor(parallelismThreshold), 0, 0, table,
@@ -3607,8 +3581,8 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> void forEach(long parallelismThreshold,
-         BiFun<? super K, ? super V, ? extends U> transformer,
-         Action<? super U> action) {
+         BiFunction<? super K, ? super V, ? extends U> transformer,
+         Consumer<? super U> action) {
       if (transformer == null || action == null)
          throw new NullPointerException();
       new ForEachTransformedMappingTask<K,V,U>
@@ -3632,7 +3606,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> U search(long parallelismThreshold,
-         BiFun<? super K, ? super V, ? extends U> searchFunction) {
+         BiFunction<? super K, ? super V, ? extends U> searchFunction) {
       if (searchFunction == null) throw new NullPointerException();
       return new SearchMappingsTask<K,V,U>
             (null, batchFor(parallelismThreshold), 0, 0, table,
@@ -3655,8 +3629,8 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> U reduce(long parallelismThreshold,
-         BiFun<? super K, ? super V, ? extends U> transformer,
-         BiFun<? super U, ? super U, ? extends U> reducer) {
+         BiFunction<? super K, ? super V, ? extends U> transformer,
+         BiFunction<? super U, ? super U, ? extends U> reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceMappingsTask<K,V,U>
@@ -3680,9 +3654,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public double reduceToDouble(long parallelismThreshold,
-         ObjectByObjectToDouble<? super K, ? super V> transformer,
+         ToDoubleBiFunction<? super K, ? super V> transformer,
          double basis,
-         DoubleByDoubleToDouble reducer) {
+         DoubleBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceMappingsToDoubleTask<K,V>
@@ -3706,9 +3680,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public long reduceToLong(long parallelismThreshold,
-         ObjectByObjectToLong<? super K, ? super V> transformer,
+         ToLongBiFunction<? super K, ? super V> transformer,
          long basis,
-         LongByLongToLong reducer) {
+         LongBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceMappingsToLongTask<K,V>
@@ -3732,9 +3706,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public int reduceToInt(long parallelismThreshold,
-         ObjectByObjectToInt<? super K, ? super V> transformer,
+         ToIntBiFunction<? super K, ? super V> transformer,
          int basis,
-         IntByIntToInt reducer) {
+         IntBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceMappingsToIntTask<K,V>
@@ -3751,7 +3725,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public void forEachKey(long parallelismThreshold,
-         Action<? super K> action) {
+         Consumer<? super K> action) {
       if (action == null) throw new NullPointerException();
       new ForEachKeyTask<K,V>
             (null, batchFor(parallelismThreshold), 0, 0, table,
@@ -3771,8 +3745,8 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> void forEachKey(long parallelismThreshold,
-         Fun<? super K, ? extends U> transformer,
-         Action<? super U> action) {
+         Function<? super K, ? extends U> transformer,
+         Consumer<? super U> action) {
       if (transformer == null || action == null)
          throw new NullPointerException();
       new ForEachTransformedKeyTask<K,V,U>
@@ -3796,7 +3770,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> U searchKeys(long parallelismThreshold,
-         Fun<? super K, ? extends U> searchFunction) {
+         Function<? super K, ? extends U> searchFunction) {
       if (searchFunction == null) throw new NullPointerException();
       return new SearchKeysTask<K,V,U>
             (null, batchFor(parallelismThreshold), 0, 0, table,
@@ -3815,7 +3789,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public K reduceKeys(long parallelismThreshold,
-         BiFun<? super K, ? super K, ? extends K> reducer) {
+         BiFunction<? super K, ? super K, ? extends K> reducer) {
       if (reducer == null) throw new NullPointerException();
       return new ReduceKeysTask<K,V>
             (null, batchFor(parallelismThreshold), 0, 0, table,
@@ -3838,8 +3812,8 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> U reduceKeys(long parallelismThreshold,
-         Fun<? super K, ? extends U> transformer,
-         BiFun<? super U, ? super U, ? extends U> reducer) {
+         Function<? super K, ? extends U> transformer,
+         BiFunction<? super U, ? super U, ? extends U> reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceKeysTask<K,V,U>
@@ -3863,9 +3837,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public double reduceKeysToDouble(long parallelismThreshold,
-         ObjectToDouble<? super K> transformer,
+         ToDoubleFunction<? super K> transformer,
          double basis,
-         DoubleByDoubleToDouble reducer) {
+         DoubleBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceKeysToDoubleTask<K,V>
@@ -3889,9 +3863,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public long reduceKeysToLong(long parallelismThreshold,
-         ObjectToLong<? super K> transformer,
+         ToLongFunction<? super K> transformer,
          long basis,
-         LongByLongToLong reducer) {
+         LongBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceKeysToLongTask<K,V>
@@ -3915,9 +3889,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public int reduceKeysToInt(long parallelismThreshold,
-         ObjectToInt<? super K> transformer,
+         ToIntFunction<? super K> transformer,
          int basis,
-         IntByIntToInt reducer) {
+         IntBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceKeysToIntTask<K,V>
@@ -3934,7 +3908,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public void forEachValue(long parallelismThreshold,
-         Action<? super V> action) {
+         Consumer<? super V> action) {
       if (action == null)
          throw new NullPointerException();
       new ForEachValueTask<K,V>
@@ -3955,8 +3929,8 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> void forEachValue(long parallelismThreshold,
-         Fun<? super V, ? extends U> transformer,
-         Action<? super U> action) {
+         Function<? super V, ? extends U> transformer,
+         Consumer<? super U> action) {
       if (transformer == null || action == null)
          throw new NullPointerException();
       new ForEachTransformedValueTask<K,V,U>
@@ -3980,7 +3954,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> U searchValues(long parallelismThreshold,
-         Fun<? super V, ? extends U> searchFunction) {
+         Function<? super V, ? extends U> searchFunction) {
       if (searchFunction == null) throw new NullPointerException();
       return new SearchValuesTask<K,V,U>
             (null, batchFor(parallelismThreshold), 0, 0, table,
@@ -3998,7 +3972,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public V reduceValues(long parallelismThreshold,
-         BiFun<? super V, ? super V, ? extends V> reducer) {
+         BiFunction<? super V, ? super V, ? extends V> reducer) {
       if (reducer == null) throw new NullPointerException();
       return new ReduceValuesTask<K,V>
             (null, batchFor(parallelismThreshold), 0, 0, table,
@@ -4021,8 +3995,8 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> U reduceValues(long parallelismThreshold,
-         Fun<? super V, ? extends U> transformer,
-         BiFun<? super U, ? super U, ? extends U> reducer) {
+         Function<? super V, ? extends U> transformer,
+         BiFunction<? super U, ? super U, ? extends U> reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceValuesTask<K,V,U>
@@ -4046,9 +4020,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public double reduceValuesToDouble(long parallelismThreshold,
-         ObjectToDouble<? super V> transformer,
+         ToDoubleFunction<? super V> transformer,
          double basis,
-         DoubleByDoubleToDouble reducer) {
+         DoubleBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceValuesToDoubleTask<K,V>
@@ -4072,9 +4046,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public long reduceValuesToLong(long parallelismThreshold,
-         ObjectToLong<? super V> transformer,
+         ToLongFunction<? super V> transformer,
          long basis,
-         LongByLongToLong reducer) {
+         LongBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceValuesToLongTask<K,V>
@@ -4098,9 +4072,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public int reduceValuesToInt(long parallelismThreshold,
-         ObjectToInt<? super V> transformer,
+         ToIntFunction<? super V> transformer,
          int basis,
-         IntByIntToInt reducer) {
+         IntBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceValuesToIntTask<K,V>
@@ -4117,7 +4091,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public void forEachEntry(long parallelismThreshold,
-         Action<? super Map.Entry<K,V>> action) {
+         Consumer<? super Map.Entry<K,V>> action) {
       if (action == null) throw new NullPointerException();
       new ForEachEntryTask<K,V>(null, batchFor(parallelismThreshold), 0, 0, table,
             action).invoke();
@@ -4136,8 +4110,8 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> void forEachEntry(long parallelismThreshold,
-         Fun<Map.Entry<K,V>, ? extends U> transformer,
-         Action<? super U> action) {
+         Function<Map.Entry<K,V>, ? extends U> transformer,
+         Consumer<? super U> action) {
       if (transformer == null || action == null)
          throw new NullPointerException();
       new ForEachTransformedEntryTask<K,V,U>
@@ -4161,7 +4135,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> U searchEntries(long parallelismThreshold,
-         Fun<Map.Entry<K,V>, ? extends U> searchFunction) {
+         Function<Map.Entry<K,V>, ? extends U> searchFunction) {
       if (searchFunction == null) throw new NullPointerException();
       return new SearchEntriesTask<K,V,U>
             (null, batchFor(parallelismThreshold), 0, 0, table,
@@ -4179,7 +4153,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public Map.Entry<K,V> reduceEntries(long parallelismThreshold,
-         BiFun<Map.Entry<K,V>, Map.Entry<K,V>, ? extends Map.Entry<K,V>> reducer) {
+         BiFunction<Entry<K,V>, Entry<K,V>, ? extends Entry<K,V>> reducer) {
       if (reducer == null) throw new NullPointerException();
       return new ReduceEntriesTask<K,V>
             (null, batchFor(parallelismThreshold), 0, 0, table,
@@ -4202,8 +4176,8 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public <U> U reduceEntries(long parallelismThreshold,
-         Fun<Map.Entry<K,V>, ? extends U> transformer,
-         BiFun<? super U, ? super U, ? extends U> reducer) {
+         Function<Map.Entry<K,V>, ? extends U> transformer,
+         BiFunction<? super U, ? super U, ? extends U> reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceEntriesTask<K,V,U>
@@ -4227,9 +4201,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public double reduceEntriesToDouble(long parallelismThreshold,
-         ObjectToDouble<Map.Entry<K,V>> transformer,
+         ToDoubleFunction<Entry<K,V>> transformer,
          double basis,
-         DoubleByDoubleToDouble reducer) {
+         DoubleBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceEntriesToDoubleTask<K,V>
@@ -4253,9 +4227,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public long reduceEntriesToLong(long parallelismThreshold,
-         ObjectToLong<Map.Entry<K,V>> transformer,
+         ToLongFunction<Entry<K,V>> transformer,
          long basis,
-         LongByLongToLong reducer) {
+         LongBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceEntriesToLongTask<K,V>
@@ -4279,9 +4253,9 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
     * @since 1.8
     */
    public int reduceEntriesToInt(long parallelismThreshold,
-         ObjectToInt<Map.Entry<K,V>> transformer,
+         ToIntFunction<Entry<K,V>> transformer,
          int basis,
-         IntByIntToInt reducer) {
+         IntBinaryOperator reducer) {
       if (transformer == null || reducer == null)
          throw new NullPointerException();
       return new MapReduceEntriesToIntTask<K,V>
@@ -4563,13 +4537,13 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
          return new KeySpliterator<K,V>(t, f, 0, f, n < 0L ? 0L : n);
       }
 
-      public void forEach(Action<? super K> action) {
+      public void forEach(Consumer<? super K> action) {
          if (action == null) throw new NullPointerException();
          Node<K,V>[] t;
          if ((t = map.table) != null) {
             Traverser<K,V> it = new Traverser<K,V>(t, t.length, 0, t.length);
             for (Node<K,V> p; (p = it.advance()) != null; )
-               action.apply(p.key);
+               action.accept(p.key);
          }
       }
    }
@@ -4621,13 +4595,13 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
          return new ValueSpliterator<K,V>(t, f, 0, f, n < 0L ? 0L : n);
       }
 
-      public void forEach(Action<? super V> action) {
+      public void forEach(Consumer<? super V> action) {
          if (action == null) throw new NullPointerException();
          Node<K,V>[] t;
          if ((t = map.table) != null) {
             Traverser<K,V> it = new Traverser<K,V>(t, t.length, 0, t.length);
             for (Node<K,V> p; (p = it.advance()) != null; )
-               action.apply(p.val);
+               action.accept(p.val);
          }
       }
    }
@@ -4710,13 +4684,13 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
          return new EntrySpliterator<K,V>(t, f, 0, f, n < 0L ? 0L : n, m);
       }
 
-      public void forEach(Action<? super Map.Entry<K,V>> action) {
+      public void forEach(Consumer<? super Map.Entry<K,V>> action) {
          if (action == null) throw new NullPointerException();
          Node<K,V>[] t;
          if ((t = map.table) != null) {
             Traverser<K,V> it = new Traverser<K,V>(t, t.length, 0, t.length);
             for (Node<K,V> p; (p = it.advance()) != null; )
-               action.apply(new MapEntry<K,V>(p.key, p.val, map));
+               action.accept(new MapEntry<K, V>(p.key, p.val, map));
          }
       }
 
@@ -4792,15 +4766,15 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ForEachKeyTask<K,V>
          extends BulkTask<K,V,Void> {
-      final Action<? super K> action;
+      final Consumer<? super K> action;
       ForEachKeyTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  Action<? super K> action) {
+                  Consumer<? super K> action) {
          super(p, b, i, f, t);
          this.action = action;
       }
       public final void compute() {
-         final Action<? super K> action;
+         final Consumer<? super K> action;
          if ((action = this.action) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
                   (h = ((f = baseLimit) + i) >>> 1) > i;) {
@@ -4810,7 +4784,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            action).fork();
             }
             for (Node<K,V> p; (p = advance()) != null;)
-               action.apply(p.key);
+               action.accept(p.key);
             propagateCompletion();
          }
       }
@@ -4819,15 +4793,15 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ForEachValueTask<K,V>
          extends BulkTask<K,V,Void> {
-      final Action<? super V> action;
+      final Consumer<? super V> action;
       ForEachValueTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  Action<? super V> action) {
+                  Consumer<? super V> action) {
          super(p, b, i, f, t);
          this.action = action;
       }
       public final void compute() {
-         final Action<? super V> action;
+         final Consumer<? super V> action;
          if ((action = this.action) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
                   (h = ((f = baseLimit) + i) >>> 1) > i;) {
@@ -4837,7 +4811,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            action).fork();
             }
             for (Node<K,V> p; (p = advance()) != null;)
-               action.apply(p.val);
+               action.accept(p.val);
             propagateCompletion();
          }
       }
@@ -4846,15 +4820,15 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ForEachEntryTask<K,V>
          extends BulkTask<K,V,Void> {
-      final Action<? super Entry<K,V>> action;
+      final Consumer<? super Entry<K,V>> action;
       ForEachEntryTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  Action<? super Entry<K,V>> action) {
+                  Consumer<? super Entry<K,V>> action) {
          super(p, b, i, f, t);
          this.action = action;
       }
       public final void compute() {
-         final Action<? super Entry<K,V>> action;
+         final Consumer<? super Entry<K,V>> action;
          if ((action = this.action) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
                   (h = ((f = baseLimit) + i) >>> 1) > i;) {
@@ -4864,7 +4838,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            action).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               action.apply(p);
+               action.accept(p);
             propagateCompletion();
          }
       }
@@ -4873,15 +4847,15 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ForEachMappingTask<K,V>
          extends BulkTask<K,V,Void> {
-      final BiAction<? super K, ? super V> action;
+      final BiConsumer<? super K, ? super V> action;
       ForEachMappingTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  BiAction<? super K,? super V> action) {
+                  BiConsumer<? super K,? super V> action) {
          super(p, b, i, f, t);
          this.action = action;
       }
       public final void compute() {
-         final BiAction<? super K, ? super V> action;
+         final BiConsumer<? super K, ? super V> action;
          if ((action = this.action) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
                   (h = ((f = baseLimit) + i) >>> 1) > i;) {
@@ -4891,7 +4865,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            action).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               action.apply(p.key, p.val);
+               action.accept(p.key, p.val);
             propagateCompletion();
          }
       }
@@ -4900,17 +4874,17 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ForEachTransformedKeyTask<K,V,U>
          extends BulkTask<K,V,Void> {
-      final Fun<? super K, ? extends U> transformer;
-      final Action<? super U> action;
+      final Function<? super K, ? extends U> transformer;
+      final Consumer<? super U> action;
       ForEachTransformedKeyTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  Fun<? super K, ? extends U> transformer, Action<? super U> action) {
+                  Function<? super K, ? extends U> transformer, Consumer<? super U> action) {
          super(p, b, i, f, t);
          this.transformer = transformer; this.action = action;
       }
       public final void compute() {
-         final Fun<? super K, ? extends U> transformer;
-         final Action<? super U> action;
+         final Function<? super K, ? extends U> transformer;
+         final Consumer<? super U> action;
          if ((transformer = this.transformer) != null &&
                (action = this.action) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
@@ -4923,7 +4897,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
             for (Node<K,V> p; (p = advance()) != null; ) {
                U u;
                if ((u = transformer.apply(p.key)) != null)
-                  action.apply(u);
+                  action.accept(u);
             }
             propagateCompletion();
          }
@@ -4933,17 +4907,17 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ForEachTransformedValueTask<K,V,U>
          extends BulkTask<K,V,Void> {
-      final Fun<? super V, ? extends U> transformer;
-      final Action<? super U> action;
+      final Function<? super V, ? extends U> transformer;
+      final Consumer<? super U> action;
       ForEachTransformedValueTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  Fun<? super V, ? extends U> transformer, Action<? super U> action) {
+                  Function<? super V, ? extends U> transformer, Consumer<? super U> action) {
          super(p, b, i, f, t);
          this.transformer = transformer; this.action = action;
       }
       public final void compute() {
-         final Fun<? super V, ? extends U> transformer;
-         final Action<? super U> action;
+         final Function<? super V, ? extends U> transformer;
+         final Consumer<? super U> action;
          if ((transformer = this.transformer) != null &&
                (action = this.action) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
@@ -4956,7 +4930,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
             for (Node<K,V> p; (p = advance()) != null; ) {
                U u;
                if ((u = transformer.apply(p.val)) != null)
-                  action.apply(u);
+                  action.accept(u);
             }
             propagateCompletion();
          }
@@ -4966,17 +4940,17 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ForEachTransformedEntryTask<K,V,U>
          extends BulkTask<K,V,Void> {
-      final Fun<Map.Entry<K,V>, ? extends U> transformer;
-      final Action<? super U> action;
+      final Function<Map.Entry<K,V>, ? extends U> transformer;
+      final Consumer<? super U> action;
       ForEachTransformedEntryTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  Fun<Map.Entry<K,V>, ? extends U> transformer, Action<? super U> action) {
+                  Function<Map.Entry<K,V>, ? extends U> transformer, Consumer<? super U> action) {
          super(p, b, i, f, t);
          this.transformer = transformer; this.action = action;
       }
       public final void compute() {
-         final Fun<Map.Entry<K,V>, ? extends U> transformer;
-         final Action<? super U> action;
+         final Function<Map.Entry<K,V>, ? extends U> transformer;
+         final Consumer<? super U> action;
          if ((transformer = this.transformer) != null &&
                (action = this.action) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
@@ -4989,7 +4963,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
             for (Node<K,V> p; (p = advance()) != null; ) {
                U u;
                if ((u = transformer.apply(p)) != null)
-                  action.apply(u);
+                  action.accept(u);
             }
             propagateCompletion();
          }
@@ -4999,18 +4973,18 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ForEachTransformedMappingTask<K,V,U>
          extends BulkTask<K,V,Void> {
-      final BiFun<? super K, ? super V, ? extends U> transformer;
-      final Action<? super U> action;
+      final BiFunction<? super K, ? super V, ? extends U> transformer;
+      final Consumer<? super U> action;
       ForEachTransformedMappingTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  BiFun<? super K, ? super V, ? extends U> transformer,
-                  Action<? super U> action) {
+                  BiFunction<? super K, ? super V, ? extends U> transformer,
+                  Consumer<? super U> action) {
          super(p, b, i, f, t);
          this.transformer = transformer; this.action = action;
       }
       public final void compute() {
-         final BiFun<? super K, ? super V, ? extends U> transformer;
-         final Action<? super U> action;
+         final BiFunction<? super K, ? super V, ? extends U> transformer;
+         final Consumer<? super U> action;
          if ((transformer = this.transformer) != null &&
                (action = this.action) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
@@ -5023,7 +4997,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
             for (Node<K,V> p; (p = advance()) != null; ) {
                U u;
                if ((u = transformer.apply(p.key, p.val)) != null)
-                  action.apply(u);
+                  action.accept(u);
             }
             propagateCompletion();
          }
@@ -5033,18 +5007,18 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class SearchKeysTask<K,V,U>
          extends BulkTask<K,V,U> {
-      final Fun<? super K, ? extends U> searchFunction;
+      final Function<? super K, ? extends U> searchFunction;
       final AtomicReference<U> result;
       SearchKeysTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  Fun<? super K, ? extends U> searchFunction,
+                  Function<? super K, ? extends U> searchFunction,
                   AtomicReference<U> result) {
          super(p, b, i, f, t);
          this.searchFunction = searchFunction; this.result = result;
       }
       public final U getRawResult() { return result.get(); }
       public final void compute() {
-         final Fun<? super K, ? extends U> searchFunction;
+         final Function<? super K, ? extends U> searchFunction;
          final AtomicReference<U> result;
          if ((searchFunction = this.searchFunction) != null &&
                (result = this.result) != null) {
@@ -5077,18 +5051,18 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class SearchValuesTask<K,V,U>
          extends BulkTask<K,V,U> {
-      final Fun<? super V, ? extends U> searchFunction;
+      final Function<? super V, ? extends U> searchFunction;
       final AtomicReference<U> result;
       SearchValuesTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  Fun<? super V, ? extends U> searchFunction,
+                  Function<? super V, ? extends U> searchFunction,
                   AtomicReference<U> result) {
          super(p, b, i, f, t);
          this.searchFunction = searchFunction; this.result = result;
       }
       public final U getRawResult() { return result.get(); }
       public final void compute() {
-         final Fun<? super V, ? extends U> searchFunction;
+         final Function<? super V, ? extends U> searchFunction;
          final AtomicReference<U> result;
          if ((searchFunction = this.searchFunction) != null &&
                (result = this.result) != null) {
@@ -5121,18 +5095,18 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class SearchEntriesTask<K,V,U>
          extends BulkTask<K,V,U> {
-      final Fun<Entry<K,V>, ? extends U> searchFunction;
+      final Function<Entry<K,V>, ? extends U> searchFunction;
       final AtomicReference<U> result;
       SearchEntriesTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  Fun<Entry<K,V>, ? extends U> searchFunction,
+                  Function<Entry<K,V>, ? extends U> searchFunction,
                   AtomicReference<U> result) {
          super(p, b, i, f, t);
          this.searchFunction = searchFunction; this.result = result;
       }
       public final U getRawResult() { return result.get(); }
       public final void compute() {
-         final Fun<Entry<K,V>, ? extends U> searchFunction;
+         final Function<Entry<K,V>, ? extends U> searchFunction;
          final AtomicReference<U> result;
          if ((searchFunction = this.searchFunction) != null &&
                (result = this.result) != null) {
@@ -5165,18 +5139,18 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class SearchMappingsTask<K,V,U>
          extends BulkTask<K,V,U> {
-      final BiFun<? super K, ? super V, ? extends U> searchFunction;
+      final BiFunction<? super K, ? super V, ? extends U> searchFunction;
       final AtomicReference<U> result;
       SearchMappingsTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
-                  BiFun<? super K, ? super V, ? extends U> searchFunction,
+                  BiFunction<? super K, ? super V, ? extends U> searchFunction,
                   AtomicReference<U> result) {
          super(p, b, i, f, t);
          this.searchFunction = searchFunction; this.result = result;
       }
       public final U getRawResult() { return result.get(); }
       public final void compute() {
-         final BiFun<? super K, ? super V, ? extends U> searchFunction;
+         final BiFunction<? super K, ? super V, ? extends U> searchFunction;
          final AtomicReference<U> result;
          if ((searchFunction = this.searchFunction) != null &&
                (result = this.result) != null) {
@@ -5209,19 +5183,19 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ReduceKeysTask<K,V>
          extends BulkTask<K,V,K> {
-      final BiFun<? super K, ? super K, ? extends K> reducer;
+      final BiFunction<? super K, ? super K, ? extends K> reducer;
       K result;
       ReduceKeysTask<K,V> rights, nextRight;
       ReduceKeysTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   ReduceKeysTask<K,V> nextRight,
-                  BiFun<? super K, ? super K, ? extends K> reducer) {
+                  BiFunction<? super K, ? super K, ? extends K> reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.reducer = reducer;
       }
       public final K getRawResult() { return result; }
       public final void compute() {
-         final BiFun<? super K, ? super K, ? extends K> reducer;
+         final BiFunction<? super K, ? super K, ? extends K> reducer;
          if ((reducer = this.reducer) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
                   (h = ((f = baseLimit) + i) >>> 1) > i;) {
@@ -5256,19 +5230,19 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ReduceValuesTask<K,V>
          extends BulkTask<K,V,V> {
-      final BiFun<? super V, ? super V, ? extends V> reducer;
+      final BiFunction<? super V, ? super V, ? extends V> reducer;
       V result;
       ReduceValuesTask<K,V> rights, nextRight;
       ReduceValuesTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   ReduceValuesTask<K,V> nextRight,
-                  BiFun<? super V, ? super V, ? extends V> reducer) {
+                  BiFunction<? super V, ? super V, ? extends V> reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.reducer = reducer;
       }
       public final V getRawResult() { return result; }
       public final void compute() {
-         final BiFun<? super V, ? super V, ? extends V> reducer;
+         final BiFunction<? super V, ? super V, ? extends V> reducer;
          if ((reducer = this.reducer) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
                   (h = ((f = baseLimit) + i) >>> 1) > i;) {
@@ -5303,19 +5277,19 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class ReduceEntriesTask<K,V>
          extends BulkTask<K,V,Map.Entry<K,V>> {
-      final BiFun<Map.Entry<K,V>, Map.Entry<K,V>, ? extends Map.Entry<K,V>> reducer;
+      final BiFunction<Map.Entry<K,V>, Map.Entry<K,V>, ? extends Map.Entry<K,V>> reducer;
       Map.Entry<K,V> result;
       ReduceEntriesTask<K,V> rights, nextRight;
       ReduceEntriesTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   ReduceEntriesTask<K,V> nextRight,
-                  BiFun<Entry<K,V>, Map.Entry<K,V>, ? extends Map.Entry<K,V>> reducer) {
+                  BiFunction<Entry<K,V>, Map.Entry<K,V>, ? extends Map.Entry<K,V>> reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.reducer = reducer;
       }
       public final Map.Entry<K,V> getRawResult() { return result; }
       public final void compute() {
-         final BiFun<Map.Entry<K,V>, Map.Entry<K,V>, ? extends Map.Entry<K,V>> reducer;
+         final BiFunction<Map.Entry<K,V>, Map.Entry<K,V>, ? extends Map.Entry<K,V>> reducer;
          if ((reducer = this.reducer) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
                   (h = ((f = baseLimit) + i) >>> 1) > i;) {
@@ -5348,23 +5322,23 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceKeysTask<K,V,U>
          extends BulkTask<K,V,U> {
-      final Fun<? super K, ? extends U> transformer;
-      final BiFun<? super U, ? super U, ? extends U> reducer;
+      final Function<? super K, ? extends U> transformer;
+      final BiFunction<? super U, ? super U, ? extends U> reducer;
       U result;
       MapReduceKeysTask<K,V,U> rights, nextRight;
       MapReduceKeysTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceKeysTask<K,V,U> nextRight,
-                  Fun<? super K, ? extends U> transformer,
-                  BiFun<? super U, ? super U, ? extends U> reducer) {
+                  Function<? super K, ? extends U> transformer,
+                  BiFunction<? super U, ? super U, ? extends U> reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.reducer = reducer;
       }
       public final U getRawResult() { return result; }
       public final void compute() {
-         final Fun<? super K, ? extends U> transformer;
-         final BiFun<? super U, ? super U, ? extends U> reducer;
+         final Function<? super K, ? extends U> transformer;
+         final BiFunction<? super U, ? super U, ? extends U> reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
@@ -5401,23 +5375,23 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceValuesTask<K,V,U>
          extends BulkTask<K,V,U> {
-      final Fun<? super V, ? extends U> transformer;
-      final BiFun<? super U, ? super U, ? extends U> reducer;
+      final Function<? super V, ? extends U> transformer;
+      final BiFunction<? super U, ? super U, ? extends U> reducer;
       U result;
       MapReduceValuesTask<K,V,U> rights, nextRight;
       MapReduceValuesTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceValuesTask<K,V,U> nextRight,
-                  Fun<? super V, ? extends U> transformer,
-                  BiFun<? super U, ? super U, ? extends U> reducer) {
+                  Function<? super V, ? extends U> transformer,
+                  BiFunction<? super U, ? super U, ? extends U> reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.reducer = reducer;
       }
       public final U getRawResult() { return result; }
       public final void compute() {
-         final Fun<? super V, ? extends U> transformer;
-         final BiFun<? super U, ? super U, ? extends U> reducer;
+         final Function<? super V, ? extends U> transformer;
+         final BiFunction<? super U, ? super U, ? extends U> reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
@@ -5454,23 +5428,23 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceEntriesTask<K,V,U>
          extends BulkTask<K,V,U> {
-      final Fun<Map.Entry<K,V>, ? extends U> transformer;
-      final BiFun<? super U, ? super U, ? extends U> reducer;
+      final Function<Map.Entry<K,V>, ? extends U> transformer;
+      final BiFunction<? super U, ? super U, ? extends U> reducer;
       U result;
       MapReduceEntriesTask<K,V,U> rights, nextRight;
       MapReduceEntriesTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceEntriesTask<K,V,U> nextRight,
-                  Fun<Map.Entry<K,V>, ? extends U> transformer,
-                  BiFun<? super U, ? super U, ? extends U> reducer) {
+                  Function<Map.Entry<K,V>, ? extends U> transformer,
+                  BiFunction<? super U, ? super U, ? extends U> reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.reducer = reducer;
       }
       public final U getRawResult() { return result; }
       public final void compute() {
-         final Fun<Map.Entry<K,V>, ? extends U> transformer;
-         final BiFun<? super U, ? super U, ? extends U> reducer;
+         final Function<Map.Entry<K,V>, ? extends U> transformer;
+         final BiFunction<? super U, ? super U, ? extends U> reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
@@ -5507,23 +5481,23 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceMappingsTask<K,V,U>
          extends BulkTask<K,V,U> {
-      final BiFun<? super K, ? super V, ? extends U> transformer;
-      final BiFun<? super U, ? super U, ? extends U> reducer;
+      final BiFunction<? super K, ? super V, ? extends U> transformer;
+      final BiFunction<? super U, ? super U, ? extends U> reducer;
       U result;
       MapReduceMappingsTask<K,V,U> rights, nextRight;
       MapReduceMappingsTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceMappingsTask<K,V,U> nextRight,
-                  BiFun<? super K, ? super V, ? extends U> transformer,
-                  BiFun<? super U, ? super U, ? extends U> reducer) {
+                  BiFunction<? super K, ? super V, ? extends U> transformer,
+                  BiFunction<? super U, ? super U, ? extends U> reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.reducer = reducer;
       }
       public final U getRawResult() { return result; }
       public final void compute() {
-         final BiFun<? super K, ? super V, ? extends U> transformer;
-         final BiFun<? super U, ? super U, ? extends U> reducer;
+         final BiFunction<? super K, ? super V, ? extends U> transformer;
+         final BiFunction<? super U, ? super U, ? extends U> reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             for (int i = baseIndex, f, h; batch > 0 &&
@@ -5560,25 +5534,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceKeysToDoubleTask<K,V>
          extends BulkTask<K,V,Double> {
-      final ObjectToDouble<? super K> transformer;
-      final DoubleByDoubleToDouble reducer;
+      final ToDoubleFunction<? super K> transformer;
+      final DoubleBinaryOperator reducer;
       final double basis;
       double result;
       MapReduceKeysToDoubleTask<K,V> rights, nextRight;
       MapReduceKeysToDoubleTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceKeysToDoubleTask<K,V> nextRight,
-                  ObjectToDouble<? super K> transformer,
+                  ToDoubleFunction<? super K> transformer,
                   double basis,
-                  DoubleByDoubleToDouble reducer) {
+                  DoubleBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Double getRawResult() { return result; }
       public final void compute() {
-         final ObjectToDouble<? super K> transformer;
-         final DoubleByDoubleToDouble reducer;
+         final ToDoubleFunction<? super K> transformer;
+         final DoubleBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             double r = this.basis;
@@ -5590,7 +5564,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p.key));
+               r = reducer.applyAsDouble(r, transformer.applyAsDouble(p.key));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -5598,7 +5572,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceKeysToDoubleTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsDouble(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -5609,25 +5583,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceValuesToDoubleTask<K,V>
          extends BulkTask<K,V,Double> {
-      final ObjectToDouble<? super V> transformer;
-      final DoubleByDoubleToDouble reducer;
+      final ToDoubleFunction<? super V> transformer;
+      final DoubleBinaryOperator reducer;
       final double basis;
       double result;
       MapReduceValuesToDoubleTask<K,V> rights, nextRight;
       MapReduceValuesToDoubleTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceValuesToDoubleTask<K,V> nextRight,
-                  ObjectToDouble<? super V> transformer,
+                  ToDoubleFunction<? super V> transformer,
                   double basis,
-                  DoubleByDoubleToDouble reducer) {
+                  DoubleBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Double getRawResult() { return result; }
       public final void compute() {
-         final ObjectToDouble<? super V> transformer;
-         final DoubleByDoubleToDouble reducer;
+         final ToDoubleFunction<? super V> transformer;
+         final DoubleBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             double r = this.basis;
@@ -5639,7 +5613,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p.val));
+               r = reducer.applyAsDouble(r, transformer.applyAsDouble(p.val));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -5647,7 +5621,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceValuesToDoubleTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsDouble(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -5658,25 +5632,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceEntriesToDoubleTask<K,V>
          extends BulkTask<K,V,Double> {
-      final ObjectToDouble<Map.Entry<K,V>> transformer;
-      final DoubleByDoubleToDouble reducer;
+      final ToDoubleFunction<Entry<K,V>> transformer;
+      final DoubleBinaryOperator reducer;
       final double basis;
       double result;
       MapReduceEntriesToDoubleTask<K,V> rights, nextRight;
       MapReduceEntriesToDoubleTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceEntriesToDoubleTask<K,V> nextRight,
-                  ObjectToDouble<Map.Entry<K,V>> transformer,
+                  ToDoubleFunction<Entry<K,V>> transformer,
                   double basis,
-                  DoubleByDoubleToDouble reducer) {
+                  DoubleBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Double getRawResult() { return result; }
       public final void compute() {
-         final ObjectToDouble<Map.Entry<K,V>> transformer;
-         final DoubleByDoubleToDouble reducer;
+         final ToDoubleFunction<Entry<K,V>> transformer;
+         final DoubleBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             double r = this.basis;
@@ -5688,7 +5662,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p));
+               r = reducer.applyAsDouble(r, transformer.applyAsDouble(p));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -5696,7 +5670,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceEntriesToDoubleTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsDouble(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -5707,25 +5681,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceMappingsToDoubleTask<K,V>
          extends BulkTask<K,V,Double> {
-      final ObjectByObjectToDouble<? super K, ? super V> transformer;
-      final DoubleByDoubleToDouble reducer;
+      final ToDoubleBiFunction<? super K, ? super V> transformer;
+      final DoubleBinaryOperator reducer;
       final double basis;
       double result;
       MapReduceMappingsToDoubleTask<K,V> rights, nextRight;
       MapReduceMappingsToDoubleTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceMappingsToDoubleTask<K,V> nextRight,
-                  ObjectByObjectToDouble<? super K, ? super V> transformer,
+                  ToDoubleBiFunction<? super K, ? super V> transformer,
                   double basis,
-                  DoubleByDoubleToDouble reducer) {
+                  DoubleBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Double getRawResult() { return result; }
       public final void compute() {
-         final ObjectByObjectToDouble<? super K, ? super V> transformer;
-         final DoubleByDoubleToDouble reducer;
+         final ToDoubleBiFunction<? super K, ? super V> transformer;
+         final DoubleBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             double r = this.basis;
@@ -5737,7 +5711,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p.key, p.val));
+               r = reducer.applyAsDouble(r, transformer.applyAsDouble(p.key, p.val));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -5745,7 +5719,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceMappingsToDoubleTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsDouble(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -5756,25 +5730,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceKeysToLongTask<K,V>
          extends BulkTask<K,V,Long> {
-      final ObjectToLong<? super K> transformer;
-      final LongByLongToLong reducer;
+      final ToLongFunction<? super K> transformer;
+      final LongBinaryOperator reducer;
       final long basis;
       long result;
       MapReduceKeysToLongTask<K,V> rights, nextRight;
       MapReduceKeysToLongTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceKeysToLongTask<K,V> nextRight,
-                  ObjectToLong<? super K> transformer,
+                  ToLongFunction<? super K> transformer,
                   long basis,
-                  LongByLongToLong reducer) {
+                  LongBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Long getRawResult() { return result; }
       public final void compute() {
-         final ObjectToLong<? super K> transformer;
-         final LongByLongToLong reducer;
+         final ToLongFunction<? super K> transformer;
+         final LongBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             long r = this.basis;
@@ -5786,7 +5760,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p.key));
+               r = reducer.applyAsLong(r, transformer.applyAsLong(p.key));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -5794,7 +5768,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceKeysToLongTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsLong(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -5805,25 +5779,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceValuesToLongTask<K,V>
          extends BulkTask<K,V,Long> {
-      final ObjectToLong<? super V> transformer;
-      final LongByLongToLong reducer;
+      final ToLongFunction<? super V> transformer;
+      final LongBinaryOperator reducer;
       final long basis;
       long result;
       MapReduceValuesToLongTask<K,V> rights, nextRight;
       MapReduceValuesToLongTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceValuesToLongTask<K,V> nextRight,
-                  ObjectToLong<? super V> transformer,
+                  ToLongFunction<? super V> transformer,
                   long basis,
-                  LongByLongToLong reducer) {
+                  LongBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Long getRawResult() { return result; }
       public final void compute() {
-         final ObjectToLong<? super V> transformer;
-         final LongByLongToLong reducer;
+         final ToLongFunction<? super V> transformer;
+         final LongBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             long r = this.basis;
@@ -5835,7 +5809,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p.val));
+               r = reducer.applyAsLong(r, transformer.applyAsLong(p.val));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -5843,7 +5817,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceValuesToLongTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsLong(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -5854,25 +5828,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceEntriesToLongTask<K,V>
          extends BulkTask<K,V,Long> {
-      final ObjectToLong<Map.Entry<K,V>> transformer;
-      final LongByLongToLong reducer;
+      final ToLongFunction<Entry<K,V>> transformer;
+      final LongBinaryOperator reducer;
       final long basis;
       long result;
       MapReduceEntriesToLongTask<K,V> rights, nextRight;
       MapReduceEntriesToLongTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceEntriesToLongTask<K,V> nextRight,
-                  ObjectToLong<Map.Entry<K,V>> transformer,
+                  ToLongFunction<Entry<K,V>> transformer,
                   long basis,
-                  LongByLongToLong reducer) {
+                  LongBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Long getRawResult() { return result; }
       public final void compute() {
-         final ObjectToLong<Map.Entry<K,V>> transformer;
-         final LongByLongToLong reducer;
+         final ToLongFunction<Entry<K,V>> transformer;
+         final LongBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             long r = this.basis;
@@ -5884,7 +5858,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p));
+               r = reducer.applyAsLong(r, transformer.applyAsLong(p));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -5892,7 +5866,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceEntriesToLongTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsLong(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -5903,25 +5877,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceMappingsToLongTask<K,V>
          extends BulkTask<K,V,Long> {
-      final ObjectByObjectToLong<? super K, ? super V> transformer;
-      final LongByLongToLong reducer;
+      final ToLongBiFunction<? super K, ? super V> transformer;
+      final LongBinaryOperator reducer;
       final long basis;
       long result;
       MapReduceMappingsToLongTask<K,V> rights, nextRight;
       MapReduceMappingsToLongTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceMappingsToLongTask<K,V> nextRight,
-                  ObjectByObjectToLong<? super K, ? super V> transformer,
+                  ToLongBiFunction<? super K, ? super V> transformer,
                   long basis,
-                  LongByLongToLong reducer) {
+                  LongBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Long getRawResult() { return result; }
       public final void compute() {
-         final ObjectByObjectToLong<? super K, ? super V> transformer;
-         final LongByLongToLong reducer;
+         final ToLongBiFunction<? super K, ? super V> transformer;
+         final LongBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             long r = this.basis;
@@ -5933,7 +5907,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p.key, p.val));
+               r = reducer.applyAsLong(r, transformer.applyAsLong(p.key, p.val));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -5941,7 +5915,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceMappingsToLongTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsLong(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -5952,25 +5926,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceKeysToIntTask<K,V>
          extends BulkTask<K,V,Integer> {
-      final ObjectToInt<? super K> transformer;
-      final IntByIntToInt reducer;
+      final ToIntFunction<? super K> transformer;
+      final IntBinaryOperator reducer;
       final int basis;
       int result;
       MapReduceKeysToIntTask<K,V> rights, nextRight;
       MapReduceKeysToIntTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceKeysToIntTask<K,V> nextRight,
-                  ObjectToInt<? super K> transformer,
+                  ToIntFunction<? super K> transformer,
                   int basis,
-                  IntByIntToInt reducer) {
+                  IntBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Integer getRawResult() { return result; }
       public final void compute() {
-         final ObjectToInt<? super K> transformer;
-         final IntByIntToInt reducer;
+         final ToIntFunction<? super K> transformer;
+         final IntBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             int r = this.basis;
@@ -5982,7 +5956,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p.key));
+               r = reducer.applyAsInt(r, transformer.applyAsInt(p.key));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -5990,7 +5964,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceKeysToIntTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsInt(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -6001,25 +5975,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceValuesToIntTask<K,V>
          extends BulkTask<K,V,Integer> {
-      final ObjectToInt<? super V> transformer;
-      final IntByIntToInt reducer;
+      final ToIntFunction<? super V> transformer;
+      final IntBinaryOperator reducer;
       final int basis;
       int result;
       MapReduceValuesToIntTask<K,V> rights, nextRight;
       MapReduceValuesToIntTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceValuesToIntTask<K,V> nextRight,
-                  ObjectToInt<? super V> transformer,
+                  ToIntFunction<? super V> transformer,
                   int basis,
-                  IntByIntToInt reducer) {
+                  IntBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Integer getRawResult() { return result; }
       public final void compute() {
-         final ObjectToInt<? super V> transformer;
-         final IntByIntToInt reducer;
+         final ToIntFunction<? super V> transformer;
+         final IntBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             int r = this.basis;
@@ -6031,7 +6005,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p.val));
+               r = reducer.applyAsInt(r, transformer.applyAsInt(p.val));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -6039,7 +6013,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceValuesToIntTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsInt(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -6050,25 +6024,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceEntriesToIntTask<K,V>
          extends BulkTask<K,V,Integer> {
-      final ObjectToInt<Map.Entry<K,V>> transformer;
-      final IntByIntToInt reducer;
+      final ToIntFunction<Entry<K,V>> transformer;
+      final IntBinaryOperator reducer;
       final int basis;
       int result;
       MapReduceEntriesToIntTask<K,V> rights, nextRight;
       MapReduceEntriesToIntTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceEntriesToIntTask<K,V> nextRight,
-                  ObjectToInt<Map.Entry<K,V>> transformer,
+                  ToIntFunction<Entry<K,V>> transformer,
                   int basis,
-                  IntByIntToInt reducer) {
+                  IntBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Integer getRawResult() { return result; }
       public final void compute() {
-         final ObjectToInt<Map.Entry<K,V>> transformer;
-         final IntByIntToInt reducer;
+         final ToIntFunction<Entry<K,V>> transformer;
+         final IntBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             int r = this.basis;
@@ -6080,7 +6054,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p));
+               r = reducer.applyAsInt(r, transformer.applyAsInt(p));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -6088,7 +6062,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceEntriesToIntTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsInt(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }
@@ -6099,25 +6073,25 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
    @SuppressWarnings("serial")
    static final class MapReduceMappingsToIntTask<K,V>
          extends BulkTask<K,V,Integer> {
-      final ObjectByObjectToInt<? super K, ? super V> transformer;
-      final IntByIntToInt reducer;
+      final ToIntBiFunction<? super K, ? super V> transformer;
+      final IntBinaryOperator reducer;
       final int basis;
       int result;
       MapReduceMappingsToIntTask<K,V> rights, nextRight;
       MapReduceMappingsToIntTask
             (BulkTask<K,V,?> p, int b, int i, int f, Node<K,V>[] t,
                   MapReduceMappingsToIntTask<K,V> nextRight,
-                  ObjectByObjectToInt<? super K, ? super V> transformer,
+                  ToIntBiFunction<? super K, ? super V> transformer,
                   int basis,
-                  IntByIntToInt reducer) {
+                  IntBinaryOperator reducer) {
          super(p, b, i, f, t); this.nextRight = nextRight;
          this.transformer = transformer;
          this.basis = basis; this.reducer = reducer;
       }
       public final Integer getRawResult() { return result; }
       public final void compute() {
-         final ObjectByObjectToInt<? super K, ? super V> transformer;
-         final IntByIntToInt reducer;
+         final ToIntBiFunction<? super K, ? super V> transformer;
+         final IntBinaryOperator reducer;
          if ((transformer = this.transformer) != null &&
                (reducer = this.reducer) != null) {
             int r = this.basis;
@@ -6129,7 +6103,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                            rights, transformer, r, reducer)).fork();
             }
             for (Node<K,V> p; (p = advance()) != null; )
-               r = reducer.apply(r, transformer.apply(p.key, p.val));
+               r = reducer.applyAsInt(r, transformer.applyAsInt(p.key, p.val));
             result = r;
             CountedCompleter<?> c;
             for (c = firstComplete(); c != null; c = c.nextComplete()) {
@@ -6137,7 +6111,7 @@ public class EquivalentConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      t = (MapReduceMappingsToIntTask<K,V>)c,
                      s = t.rights;
                while (s != null) {
-                  t.result = reducer.apply(t.result, s.result);
+                  t.result = reducer.applyAsInt(t.result, s.result);
                   s = t.rights = s.nextRight;
                }
             }

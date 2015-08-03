@@ -28,8 +28,6 @@ import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.OperationDefinition;
 import org.jboss.as.controller.OperationStepHandler;
 import org.jboss.as.controller.PathElement;
-import org.jboss.as.controller.ReloadRequiredRemoveStepHandler;
-import org.jboss.as.controller.ReloadRequiredWriteAttributeHandler;
 import org.jboss.as.controller.SimpleAttributeDefinition;
 import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
 import org.jboss.as.controller.SimpleOperationDefinitionBuilder;
@@ -43,6 +41,7 @@ import org.jboss.dmr.ModelNode;
  * /subsystem=infinispan/cache-container=X/cache=Y/mixed-keyed-jdbc-store=MIXED_KEYED_JDBC_STORE
  *
  * @author Richard Achmatowicz (c) 2011 Red Hat Inc.
+ * @author Tristan Tarrant
  */
 public class MixedKeyedJDBCStoreResource extends BaseJDBCStoreResource {
 
@@ -57,37 +56,18 @@ public class MixedKeyedJDBCStoreResource extends BaseJDBCStoreResource {
                .build();
 
     // operations
-    private static final OperationDefinition MIXED_KEYED_JDBC_STORE_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, InfinispanExtension.getResourceDescriptionResolver(ModelKeys.MIXED_KEYED_JDBC_STORE))
+    private static final OperationDefinition MIXED_KEYED_JDBC_STORE_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, new InfinispanResourceDescriptionResolver(ModelKeys.MIXED_KEYED_JDBC_STORE))
         .setParameters(COMMON_STORE_PARAMETERS)
         .addParameter(DATA_SOURCE)
         .addParameter(DIALECT)
         .addParameter(STRING_KEYED_TABLE)
         .addParameter(BINARY_KEYED_TABLE)
-        .setAttributeResolver(InfinispanExtension.getResourceDescriptionResolver(ModelKeys.JDBC_STORE))
+        .setAttributeResolver(new InfinispanResourceDescriptionResolver(ModelKeys.JDBC_STORE))
         .build();
 
 
-    public MixedKeyedJDBCStoreResource() {
-        super(MIXED_KEYED_JDBC_STORE_PATH,
-                InfinispanExtension.getResourceDescriptionResolver(ModelKeys.MIXED_KEYED_JDBC_STORE),
-                CacheConfigOperationHandlers.MIXED_KEYED_JDBC_STORE_ADD,
-                ReloadRequiredRemoveStepHandler.INSTANCE);
-    }
-
-    @Override
-    public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        super.registerAttributes(resourceRegistration);
-
-        // check that we don't need a special handler here?
-        final OperationStepHandler writeHandler = new ReloadRequiredWriteAttributeHandler(MIXED_KEYED_JDBC_STORE_ATTRIBUTES);
-        for (AttributeDefinition attr : MIXED_KEYED_JDBC_STORE_ATTRIBUTES) {
-            resourceRegistration.registerReadWriteAttribute(attr, null, writeHandler);
-        }
-    }
-
-    @Override
-    public void registerOperations(ManagementResourceRegistration resourceRegistration) {
-        super.registerOperations(resourceRegistration);
+    public MixedKeyedJDBCStoreResource(CacheResource cacheResource) {
+        super(MIXED_KEYED_JDBC_STORE_PATH, ModelKeys.MIXED_KEYED_JDBC_STORE, cacheResource, MIXED_KEYED_JDBC_STORE_ATTRIBUTES);
     }
 
     // override the add operation to provide a custom definition (for the optional PROPERTIES parameter to add())

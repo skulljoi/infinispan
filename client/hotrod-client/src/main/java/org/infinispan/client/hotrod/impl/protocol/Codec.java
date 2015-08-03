@@ -1,5 +1,7 @@
 package org.infinispan.client.hotrod.impl.protocol;
 
+import java.util.concurrent.TimeUnit;
+
 import org.infinispan.client.hotrod.Flag;
 import org.infinispan.client.hotrod.annotation.ClientListener;
 import org.infinispan.client.hotrod.event.ClientEvent;
@@ -27,6 +29,11 @@ public interface Codec {
     */
    void writeClientListenerParams(Transport transport, ClientListener clientListener,
          byte[][] filterFactoryParams, byte[][] converterFactoryParams);
+
+   /**
+    * Write lifespan/maxidle parameters.
+    */
+   void writeExpirationParams(Transport transport, long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit);
 
    /**
     * Reads a response header from the transport and returns the status

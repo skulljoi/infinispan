@@ -32,6 +32,8 @@ public abstract class RetryOnFailureOperation<T> extends HotRodOperation {
 
    protected final TransportFactory transportFactory;
 
+   private boolean triedCompleteRestart = false;
+
    protected RetryOnFailureOperation(Codec codec, TransportFactory transportFactory,
             byte[] cacheName, AtomicInteger topologyId, Flag[] flags) {
       super(codec, flags, cacheName, topologyId);
@@ -49,18 +51,20 @@ public abstract class RetryOnFailureOperation<T> extends HotRodOperation {
             transport = getTransport(retryCount, failedServers);
             return executeOperation(transport);
          } catch (TransportException te) {
-            if (failedServers == null) {
-               failedServers = new HashSet<SocketAddress>();
-            }
-            failedServers.add(te.getServerAddress());
+            SocketAddress address = te.getServerAddress();
+            failedServers = updateFailedServers(address, failedServers);
             // Invalidate transport since this exception means that this
             // instance is no longer usable and should be destroyed.
-            if (transport != null) {
-               transportFactory.invalidateTransport(
-                     te.getServerAddress(), transport);
-            }
-            logErrorAndThrowExceptionIfNeeded(retryCount, te);
-         } catch (RemoteNodeSuspectException | RemoteIllegalLifecycleStateException e) {
+            invalidateTransport(transport, address);
+            retryCount = logTransportErrorAndThrowExceptionIfNeeded(retryCount, te);
+         } catch (RemoteIllegalLifecycleStateException e) {
+            SocketAddress address = e.getServerAddress();
+            failedServers = updateFailedServers(address, failedServers);
+            // Invalidate transport since this exception means that this
+            // instance is no longer usable and should be destroyed.
+            invalidateTransport(transport, address);
+            retryCount = logTransportErrorAndThrowExceptionIfNeeded(retryCount, e);
+         } catch (RemoteNodeSuspectException e) {
             // Do not invalidate transport because this exception is caused
             // as a result of a server finding out that another node has
             // been suspected, so there's nothing really wrong with the server
@@ -75,8 +79,47 @@ public abstract class RetryOnFailureOperation<T> extends HotRodOperation {
       throw new IllegalStateException("We should not reach here!");
    }
 
+   private void invalidateTransport(Transport transport, SocketAddress address) {
+      if (transport != null) {
+         if (log.isTraceEnabled())
+            log.tracef("Invalidating transport %s as a result of transport exception", transport);
+
+         transportFactory.invalidateTransport(address, transport);
+      }
+   }
+
+   private Set<SocketAddress> updateFailedServers(SocketAddress address, Set<SocketAddress> failedServers) {
+      if (failedServers == null) {
+         failedServers = new HashSet<SocketAddress>();
+      }
+
+      if (log.isTraceEnabled())
+         log.tracef("Add %s to failed servers", address);
+
+      failedServers.add(address);
+      return failedServers;
+   }
+
    protected boolean shouldRetry(int retryCount) {
       return retryCount <= transportFactory.getMaxRetries();
+   }
+
+   protected int logTransportErrorAndThrowExceptionIfNeeded(int i, HotRodClientException e) {
+      String message = "Exception encountered. Retry %d out of %d";
+      if (i >= transportFactory.getMaxRetries() || transportFactory.getMaxRetries() < 0) {
+         if (!triedCompleteRestart) {
+            log.debug("Cluster might have completely shut down, try resetting transport layer and topology id", e);
+            transportFactory.reset(cacheName);
+            triedCompleteRestart = true;
+            return -1; // reset retry count
+         } else {
+            log.exceptionAndNoRetriesLeft(i,transportFactory.getMaxRetries(), e);
+            throw e;
+         }
+      } else {
+         log.tracef(e, message, i, transportFactory.getMaxRetries());
+         return i;
+      }
    }
 
    protected void logErrorAndThrowExceptionIfNeeded(int i, HotRodClientException e) {

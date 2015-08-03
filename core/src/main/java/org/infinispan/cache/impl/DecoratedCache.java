@@ -8,20 +8,24 @@ import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.AdvancedCache;
-import org.infinispan.commons.util.CloseableIteratorCollection;
-import org.infinispan.commons.util.CloseableIteratorSet;
+import org.infinispan.CacheCollection;
+import org.infinispan.CacheSet;
 import org.infinispan.commons.util.concurrent.NotifyingFuture;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.filter.KeyValueFilter;
 import org.infinispan.iteration.EntryIterable;
+import org.infinispan.iteration.impl.EntryIterableFromStreamImpl;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.filter.KeyFilter;
+import org.infinispan.stream.StreamMarshalling;
+import org.infinispan.stream.impl.local.ValueCacheCollection;
 
 /**
  * A decorator to a cache, which can be built with a specific {@link ClassLoader} and a set of {@link Flag}s.  This
@@ -423,8 +427,19 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
    }
 
    @Override
+   public boolean containsValue(Object value) {
+      Objects.nonNull(value);
+      return values().stream().anyMatch(StreamMarshalling.equalityPredicate(value));
+   }
+
+   @Override
    public V get(Object key) {
       return cacheImplementation.get(key, flags, classLoader.get());
+   }
+
+   @Override
+   public Map<K, V> getAll(Set<?> keys) {
+      return cacheImplementation.getAll(keys, flags, classLoader.get());
    }
 
    @Override
@@ -438,6 +453,11 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
    }
 
    @Override
+   public void putAll(Map<? extends K, ? extends V> map, Metadata metadata) {
+      cacheImplementation.putAll(map, metadata, flags, classLoader.get());
+   }
+
+   @Override
    public void putAll(Map<? extends K, ? extends V> m) {
       cacheImplementation.putAll(m, cacheImplementation.defaultMetadata, flags, classLoader.get());
    }
@@ -448,7 +468,7 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
    }
 
    @Override
-   public CloseableIteratorSet<K> keySet() {
+   public CacheSet<K> keySet() {
       return cacheImplementation.keySet(flags, classLoader.get());
    }
 
@@ -463,13 +483,18 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
    }
 
    @Override
-   public CloseableIteratorCollection<V> values() {
-      return cacheImplementation.values(flags, classLoader.get());
+   public CacheCollection<V> values() {
+      return new ValueCacheCollection<>(this, cacheEntrySet());
    }
 
    @Override
-   public CloseableIteratorSet<Entry<K, V>> entrySet() {
+   public CacheSet<Entry<K, V>> entrySet() {
       return cacheImplementation.entrySet(flags, classLoader.get());
+   }
+
+   @Override
+   public CacheSet<CacheEntry<K, V>> cacheEntrySet() {
+      return cacheImplementation.cacheEntrySet(flags, classLoader.get());
    }
 
    @Override
@@ -503,7 +528,7 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
    }
 
    @Override
-   public void addListener(Object listener, KeyFilter filter) {
+   public void addListener(Object listener, KeyFilter<? super K> filter) {
       cacheImplementation.notifier.addListener(listener, filter, classLoader.get());
    }
 
@@ -533,13 +558,12 @@ public class DecoratedCache<K, V> extends AbstractDelegatingAdvancedCache<K, V> 
    }
 
    @Override
-   public CacheEntry getCacheEntry(K key) {
+   public CacheEntry getCacheEntry(Object key) {
       return cacheImplementation.getCacheEntry(key, flags, classLoader.get());
    }
 
-
    @Override
    public EntryIterable<K, V> filterEntries(KeyValueFilter<? super K, ? super V> filter) {
-      return cacheImplementation.filterEntries(filter, flags, classLoader.get());
+      return new EntryIterableFromStreamImpl<>(filter, flags, this);
    }
 }

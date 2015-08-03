@@ -7,6 +7,7 @@ import org.infinispan.client.hotrod.impl.protocol.HeaderParams;
 import org.infinispan.client.hotrod.impl.transport.Transport;
 import org.infinispan.client.hotrod.impl.transport.TransportFactory;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -20,9 +21,9 @@ public class ReplaceIfUnmodifiedOperation extends AbstractKeyValueOperation<Vers
    private final long version;
 
    public ReplaceIfUnmodifiedOperation(Codec codec, TransportFactory transportFactory, byte[] key, byte[] cacheName,
-                                       AtomicInteger topologyId, Flag[] flags, byte[] value, int lifespan,
-                                       int maxIdle, long version) {
-      super(codec, transportFactory, key, cacheName, topologyId, flags, value, lifespan, maxIdle);
+                                       AtomicInteger topologyId, Flag[] flags, byte[] value,
+                                       long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit, long version) {
+      super(codec, transportFactory, key, cacheName, topologyId, flags, value, lifespan, lifespanTimeUnit, maxIdle, maxIdleTimeUnit);
       this.version = version;
    }
 
@@ -33,8 +34,7 @@ public class ReplaceIfUnmodifiedOperation extends AbstractKeyValueOperation<Vers
 
       //2) write message body
       transport.writeArray(key);
-      transport.writeVInt(lifespan);
-      transport.writeVInt(maxIdle);
+      codec.writeExpirationParams(transport, lifespan, lifespanTimeUnit, maxIdle, maxIdleTimeUnit);
       transport.writeLong(version);
       transport.writeArray(value);
       transport.flush();

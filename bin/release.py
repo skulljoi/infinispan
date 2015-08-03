@@ -188,7 +188,7 @@ def unzip_archive(version):
     subprocess.check_call(["unzip", "-q", "infinispan-%s-all.zip" % version])
 
 def update_javadoc_tracker(base_dir, version):
-  os.chdir("%s/distribution/target/distribution/infinispan-%s-all/doc" % (base_dir, version))
+  os.chdir("%s/distribution/target/distribution/infinispan-%s-all/docs" % (base_dir, version))
   ## "Fix" the docs to use the appropriate analytics tracker ID
   subprocess.check_call(["%s/bin/updateTracker.sh" % base_dir])
 
@@ -197,7 +197,7 @@ def upload_javadocs(base_dir, version):
   version_short = get_version_major_minor(version)
   
   os.mkdir(version_short)
-  os.rename("apidocs", "%s/apidocs" % version_short)
+  os.rename("api", "%s/apidocs" % version_short)
   
   ## rsync this stuff to filemgmt.jboss.org
   uploader.upload_rsync(version_short, "infinispan@filemgmt.jboss.org:/docs_htdocs/infinispan")
@@ -360,7 +360,7 @@ def release():
   else:
     prettyprint("In dry-run mode.  Not pushing tag to remote origin and not removing temp release branch %s." % git.working_branch, Levels.DEBUG)
   
-  prettyprint("\n\n\nDone!  Now all you need to do is the remaining post-release tasks as outlined in https://docspace.corp.redhat.com/docs/DOC-28594", Levels.INFO)
+  prettyprint("\n\n\nDone!  Now all you need to do is the remaining post-release tasks as outlined in https://mojo.redhat.com/docs/DOC-60994", Levels.INFO)
 
 if __name__ == "__main__":
   release()

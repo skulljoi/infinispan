@@ -1,6 +1,7 @@
 package org.infinispan.cache.impl;
 
 import org.infinispan.AdvancedCache;
+import org.infinispan.CacheSet;
 import org.infinispan.atomic.Delta;
 import org.infinispan.batch.BatchContainer;
 import org.infinispan.commons.util.concurrent.NotifyingFuture;
@@ -10,6 +11,7 @@ import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContextContainer;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.eviction.EvictionManager;
+import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.filter.KeyValueFilter;
 import org.infinispan.interceptors.base.CommandInterceptor;
@@ -27,6 +29,8 @@ import javax.transaction.xa.XAResource;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Similar to {@link org.infinispan.cache.impl.AbstractDelegatingCache}, but for {@link AdvancedCache}.
@@ -96,6 +100,11 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    @Override
    public EvictionManager getEvictionManager() {
       return cache.getEvictionManager();
+   }
+
+   @Override
+   public ExpirationManager<K, V> getExpirationManager() {
+      return cache.getExpirationManager();
    }
 
    @Override
@@ -194,8 +203,18 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    }
 
    @Override
-   public CacheEntry<K, V> getCacheEntry(K key) {
+   public Map<K, V> getAll(Set<?> keys) {
+      return cache.getAll(keys);
+   }
+
+   @Override
+   public CacheEntry<K, V> getCacheEntry(Object key) {
       return cache.getCacheEntry(key);
+   }
+
+   @Override
+   public Map<K, CacheEntry<K, V>> getAllCacheEntries(Set<?> keys) {
+      return cache.getAllCacheEntries(keys);
    }
 
    @Override
@@ -243,6 +262,16 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
       cache.putForExternalRead(key, value, metadata);
    }
 
+   @Override
+   public void putAll(Map<? extends K, ? extends V> map, Metadata metadata) {
+      cache.putAll(map, metadata);
+   }
+
+   @Override
+   public CacheSet<CacheEntry<K, V>> cacheEntrySet() {
+      return cache.cacheEntrySet();
+   }
+
    protected final void putForExternalRead(K key, V value, EnumSet<Flag> flags, ClassLoader classLoader) {
       ((CacheImpl<K, V>) cache).putForExternalRead(key, value, flags, classLoader);
    }
@@ -254,5 +283,4 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    public interface AdvancedCacheWrapper<K, V> {
       AdvancedCache<K, V> wrap(AdvancedCache<K, V> cache);
    }
-
 }

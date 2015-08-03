@@ -30,8 +30,6 @@ import org.jboss.as.controller.ObjectTypeAttributeDefinition;
 import org.jboss.as.controller.OperationDefinition;
 import org.jboss.as.controller.OperationStepHandler;
 import org.jboss.as.controller.PathElement;
-import org.jboss.as.controller.ReloadRequiredRemoveStepHandler;
-import org.jboss.as.controller.ReloadRequiredWriteAttributeHandler;
 import org.jboss.as.controller.SimpleAttributeDefinition;
 import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
 import org.jboss.as.controller.SimpleOperationDefinitionBuilder;
@@ -56,27 +54,27 @@ public class RemoteStoreResource extends BaseStoreResource {
             new SimpleAttributeDefinitionBuilder(ModelKeys.CACHE, ModelType.STRING, true)
                     .setXmlName(Attribute.CACHE.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .build();
     static final SimpleAttributeDefinition HOTROD_WRAPPING =
             new SimpleAttributeDefinitionBuilder(ModelKeys.HOTROD_WRAPPING, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.HOTROD_WRAPPING.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(false))
                     .build();
     static final SimpleAttributeDefinition RAW_VALUES =
             new SimpleAttributeDefinitionBuilder(ModelKeys.RAW_VALUES, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.RAW_VALUES.getLocalName())
                     .setAllowExpression(false)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(false))
                     .build();
     static final SimpleAttributeDefinition TCP_NO_DELAY =
             new SimpleAttributeDefinitionBuilder(ModelKeys.TCP_NO_DELAY, ModelType.BOOLEAN, true)
                     .setXmlName(Attribute.TCP_NO_DELAY.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(true))
                     .build();
     static final SimpleAttributeDefinition SOCKET_TIMEOUT =
@@ -84,7 +82,7 @@ public class RemoteStoreResource extends BaseStoreResource {
                     .setXmlName(Attribute.SOCKET_TIMEOUT.getLocalName())
                     .setMeasurementUnit(MeasurementUnit.MILLISECONDS)
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(60000))
                     .build();
 
@@ -108,7 +106,7 @@ public class RemoteStoreResource extends BaseStoreResource {
     static final AttributeDefinition[] REMOTE_STORE_ATTRIBUTES = {CACHE, HOTROD_WRAPPING, TCP_NO_DELAY, RAW_VALUES, SOCKET_TIMEOUT, REMOTE_SERVERS};
 
     // operations
-    private static final OperationDefinition REMOTE_STORE_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, InfinispanExtension.getResourceDescriptionResolver(ModelKeys.REMOTE_STORE))
+    private static final OperationDefinition REMOTE_STORE_ADD_DEFINITION = new SimpleOperationDefinitionBuilder(ADD, new InfinispanResourceDescriptionResolver(ModelKeys.REMOTE_STORE))
         .setParameters(COMMON_STORE_PARAMETERS)
         .addParameter(CACHE)
         .addParameter(HOTROD_WRAPPING)
@@ -116,30 +114,11 @@ public class RemoteStoreResource extends BaseStoreResource {
         .addParameter(TCP_NO_DELAY)
         .addParameter(SOCKET_TIMEOUT)
         .addParameter(REMOTE_SERVERS)
-        .setAttributeResolver(InfinispanExtension.getResourceDescriptionResolver(ModelKeys.REMOTE_STORE))
+        .setAttributeResolver(new InfinispanResourceDescriptionResolver(ModelKeys.REMOTE_STORE))
         .build();
 
-    public RemoteStoreResource() {
-        super(REMOTE_STORE_PATH,
-                InfinispanExtension.getResourceDescriptionResolver(ModelKeys.REMOTE_STORE),
-                CacheConfigOperationHandlers.REMOTE_STORE_ADD,
-                ReloadRequiredRemoveStepHandler.INSTANCE);
-    }
-
-    @Override
-    public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
-        super.registerAttributes(resourceRegistration);
-
-        // check that we don't need a special handler here?
-        final OperationStepHandler writeHandler = new ReloadRequiredWriteAttributeHandler(REMOTE_STORE_ATTRIBUTES);
-        for (AttributeDefinition attr : REMOTE_STORE_ATTRIBUTES) {
-            resourceRegistration.registerReadWriteAttribute(attr, null, writeHandler);
-        }
-    }
-
-    @Override
-    public void registerOperations(ManagementResourceRegistration resourceRegistration) {
-        super.registerOperations(resourceRegistration);
+    public RemoteStoreResource(CacheResource cacheResource) {
+        super(REMOTE_STORE_PATH, ModelKeys.REMOTE_STORE, cacheResource, REMOTE_STORE_ATTRIBUTES);
     }
 
     // override the add operation to provide a custom definition (for the optional PROPERTIES parameter to add())

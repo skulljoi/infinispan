@@ -23,7 +23,25 @@ public class IsNullExpr implements PrimaryPredicateExpr {
    }
 
    @Override
+   public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+      IsNullExpr other = (IsNullExpr) o;
+      return child.equals(other.child);
+   }
+
+   @Override
+   public int hashCode() {
+      return child.hashCode();
+   }
+
+   @Override
    public String toString() {
-      return "IsNullExpr(" + child + ')';
+      return "IS_NULL(" + child + ')';
+   }
+
+   @Override
+   public String toJpaString() {
+      return child.toJpaString() + " IS null"; // todo [anistor] NULL vs null, a bug in hql parser
    }
 }

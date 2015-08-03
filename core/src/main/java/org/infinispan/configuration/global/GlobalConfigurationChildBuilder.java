@@ -19,9 +19,19 @@ public interface GlobalConfigurationChildBuilder {
 
    ThreadPoolConfigurationBuilder replicationQueueThreadPool();
 
+   /**
+    * Please use {@link GlobalConfigurationChildBuilder#expirationThreadPool()}
+    */
+   @Deprecated
    ThreadPoolConfigurationBuilder evictionThreadPool();
 
+   ThreadPoolConfigurationBuilder expirationThreadPool();
+
    ThreadPoolConfigurationBuilder persistenceThreadPool();
+   
+   ThreadPoolConfigurationBuilder stateTransferThreadPool();
+
+   ThreadPoolConfigurationBuilder asyncThreadPool();
 
    ScheduledExecutorFactoryConfigurationBuilder evictionScheduledExecutor();
 

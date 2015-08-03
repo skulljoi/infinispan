@@ -3,7 +3,7 @@ package org.infinispan.commons.util.concurrent.jdk8backported;
 import org.infinispan.commons.equivalence.AnyEquivalence;
 import org.infinispan.commons.equivalence.ByteArrayEquivalence;
 import org.infinispan.commons.equivalence.Equivalence;
-import org.infinispan.util.concurrent.BoundedConcurrentHashMapTest;
+import org.infinispan.util.EquivalentHashMapTest;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.testng.annotations.Test;
@@ -26,7 +26,7 @@ import static org.testng.AssertJUnit.*;
  * @since 5.3
  */
 @Test(groups = "functional", testName = "util.concurrent.jdk8backported.EquivalentConcurrentHashMapV8Test")
-public class EquivalentConcurrentHashMapV8Test extends BoundedConcurrentHashMapTest {
+public class EquivalentConcurrentHashMapV8Test extends EquivalentHashMapTest {
 
    private static final Log log = LogFactory.getLog(EquivalentConcurrentHashMapV8Test.class);
 
@@ -76,7 +76,7 @@ public class EquivalentConcurrentHashMapV8Test extends BoundedConcurrentHashMapT
                   new EvilKeyEquivalence(), AnyEquivalence.<KeyHolder<?>>getInstance());
 
       final long seed = 1370014958369218000L;
-      System.out.println("SEED: " + seed);
+      log.tracef("SEED: %s", seed);
       final Random random = new Random(seed);
 
       final int ENTRIES = 10000;
@@ -121,13 +121,7 @@ public class EquivalentConcurrentHashMapV8Test extends BoundedConcurrentHashMapT
       map.put(key, value);
 
       byte[] computeKey = {1, 2, 3}; // on purpose, different instance required
-      byte[] newValue = map.computeIfAbsent(
-            computeKey, new EquivalentConcurrentHashMapV8.Fun<byte[], byte[]>() {
-         @Override
-         public byte[] apply(byte[] bytes) {
-            return new byte[]{7, 8, 9};
-         }
-      });
+      byte[] newValue = map.computeIfAbsent(computeKey, b -> new byte[]{7, 8, 9});
 
       // Old value should be present
       assertTrue(String.format(
@@ -143,14 +137,7 @@ public class EquivalentConcurrentHashMapV8Test extends BoundedConcurrentHashMapT
       map.put(key, value);
 
       byte[] computeKey = {1, 2, 3}; // on purpose, different instance required
-      byte[] newValue = map.computeIfPresent(computeKey,
-            new EquivalentConcurrentHashMapV8.BiFun<byte[], byte[], byte[]>() {
-               @Override
-               public byte[] apply(byte[] bytes, byte[] bytes2) {
-                  return new byte[]{7, 8, 9};
-               }
-            }
-      );
+      byte[] newValue = map.computeIfPresent(computeKey, (b1, b2) -> new byte[]{7, 8, 9});
 
       byte[] expectedValue = {7, 8, 9};
       assertTrue(String.format(
@@ -166,14 +153,7 @@ public class EquivalentConcurrentHashMapV8Test extends BoundedConcurrentHashMapT
       map.put(key, value);
 
       byte[] computeKey = {1, 2, 3}; // on purpose, different instance required
-      byte[] newValue = map.merge(computeKey, new byte[]{},
-         new EquivalentConcurrentHashMapV8.BiFun<byte[], byte[], byte[]>() {
-            @Override
-            public byte[] apply(byte[] bytes, byte[] bytes2) {
-               return new byte[]{7, 8, 9};
-            }
-         }
-      );
+      byte[] newValue = map.merge(computeKey, new byte[]{}, (b1, b2) -> new byte[]{7, 8, 9});
 
       // Old value should be present
       byte[] expectedValue = {7, 8, 9};

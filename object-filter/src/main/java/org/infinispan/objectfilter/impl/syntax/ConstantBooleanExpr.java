@@ -1,6 +1,8 @@
 package org.infinispan.objectfilter.impl.syntax;
 
 /**
+ * A constant boolean expression (tautology or contradiction).
+ *
  * @author anistor@redhat.com
  * @since 7.0
  */
@@ -39,7 +41,25 @@ public final class ConstantBooleanExpr implements PrimaryPredicateExpr {
    }
 
    @Override
+   public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+      ConstantBooleanExpr other = (ConstantBooleanExpr) o;
+      return constantValue == other.constantValue;
+   }
+
+   @Override
+   public int hashCode() {
+      return constantValue ? 1 : 0;
+   }
+
+   @Override
    public String toString() {
-      return "ConstantBooleanExpr(" + constantValue + ')';
+      return constantValue ? "CONST_TRUE" : "CONST_FALSE";
+   }
+
+   @Override
+   public String toJpaString() {
+      return constantValue ? "TRUE" : "FALSE";
    }
 }

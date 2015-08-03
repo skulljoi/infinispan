@@ -1,18 +1,20 @@
 package org.infinispan.query.dsl.embedded;
 
 import org.hibernate.hql.ParsingException;
+import org.hibernate.search.spi.SearchIntegrator;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.query.Search;
 import org.infinispan.query.dsl.Query;
 import org.infinispan.query.dsl.QueryFactory;
-import org.infinispan.query.dsl.embedded.impl.EmbeddedQueryFactory;
 import org.infinispan.query.dsl.embedded.testdomain.User;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.Test;
 
 import java.util.List;
+import java.util.concurrent.Callable;
 
+import static org.infinispan.test.TestingUtil.withTx;
 import static org.junit.Assert.assertEquals;
 
 /**
@@ -22,7 +24,7 @@ import static org.junit.Assert.assertEquals;
  * @author anistor@redhat.com
  * @since 7.0
  */
-@Test(groups = "functional", testName = "query.dsl.NonIndexedQueryDslConditionsTest")
+@Test(groups = "functional", testName = "query.dsl.embedded.NonIndexedQueryDslConditionsTest")
 public class NonIndexedQueryDslConditionsTest extends QueryDslConditionsTest {
 
    @Override
@@ -31,30 +33,38 @@ public class NonIndexedQueryDslConditionsTest extends QueryDslConditionsTest {
       createClusteredCaches(1, cfg);
    }
 
+   public void testInsertAndIterateInTx() throws Exception {
+      final User newUser = getModelFactory().makeUser();
+      newUser.setId(15);
+      newUser.setName("Test");
+      newUser.setSurname("User");
+      newUser.setGender(User.Gender.MALE);
+      newUser.setAge(20);
+
+      List results = withTx(tm(0), new Callable<List>() {
+         @Override
+         public List call() throws Exception {
+            Query q = getQueryFactory().from(getModelFactory().getUserImplClass())
+                  .not().having("age").eq(20)
+                  .toBuilder()
+                  .build();
+
+            cache(0).put("new_user_" + newUser.getId(), newUser);
+
+            return q.list();
+         }
+      });
+
+      cache(0).remove("new_user_" + newUser.getId());
+
+      assertEquals(3, results.size());
+   }
+
    @Test(expectedExceptions = IllegalArgumentException.class, expectedExceptionsMessageRegExp = "Indexing was not enabled on this cache.*")
    @Override
    public void testIndexPresence() {
       // this is expected to throw an exception
-      Search.getSearchManager((Cache) getCacheForQuery()).getSearchFactory();
-   }
-
-   @Override
-   public void testQueryFactoryType() {
-      assertEquals(EmbeddedQueryFactory.class, getQueryFactory().getClass());
-   }
-
-   @Test
-   @Override
-   public void testEqNonIndexed() throws Exception {
-      QueryFactory qf = getQueryFactory();
-
-      Query q = qf.from(getModelFactory().getUserImplClass())
-            .having("notes").eq("Lorem ipsum dolor sit amet")
-            .toBuilder().build();
-
-      List<User> list = q.list();
-      assertEquals(1, list.size());
-      assertEquals(1, list.get(0).getId());
+      Search.getSearchManager((Cache) getCacheForQuery()).unwrap(SearchIntegrator.class);
    }
 
    @Test(expectedExceptions = ParsingException.class, expectedExceptionsMessageRegExp = "ISPN000405:.*")

@@ -73,60 +73,79 @@ object Encoder2x extends AbstractVersionedEncoder with Constants with Log {
    }
 
    private def writeTopologyUpdate(t: TopologyAwareResponse, buffer: ByteBuf) {
-      trace("Write topology change response header %s", t)
-      buffer.writeByte(1) // Topology changed
-      writeUnsignedInt(t.topologyId, buffer)
-      writeUnsignedInt(t.serverEndpointsMap.size, buffer)
-      for (address <- t.serverEndpointsMap.values) {
-         writeString(address.host, buffer)
-         writeUnsignedShort(address.port, buffer)
+      val topologyMap = t.serverEndpointsMap
+      if (topologyMap.isEmpty) {
+         logNoMembersInTopology()
+         buffer.writeByte(0) // Topology not changed
+      } else {
+         trace("Write topology change response header %s", t)
+         buffer.writeByte(1) // Topology changed
+         writeUnsignedInt(t.topologyId, buffer)
+         writeUnsignedInt(topologyMap.size, buffer)
+         for (address <- topologyMap.values) {
+            writeString(address.host, buffer)
+            writeUnsignedShort(address.port, buffer)
+         }
       }
    }
 
    private def writeEmptyHashInfo(t: AbstractTopologyResponse, buffer: ByteBuf) {
       trace("Return limited hash distribution aware header because the client %s doesn't ", t)
       buffer.writeByte(0) // Hash Function Version
-      buffer.writeByte(0) // Num segments in topology
+      writeUnsignedInt(t.numSegments, buffer)
    }
 
    private def writeHashTopologyUpdate(h: HashDistAware20Response, cache: Cache, buf: ByteBuf) {
-      trace("Write hash distribution change response header %s", h)
-      buf.writeByte(1) // Topology changed
-      writeUnsignedInt(h.topologyId, buf) // Topology ID
-
-      if (isTraceEnabled) trace(s"Topology cache contains: ${h.serverEndpointsMap}")
-
-      // Calculate members
+      // Calculate members first, in case there are no members
       val ch = SecurityActions.getCacheDistributionManager(cache).getReadConsistentHash
       val members = h.serverEndpointsMap.filter { case (addr, serverAddr) =>
          ch.getMembers.contains(addr)
       }
 
-      if (isTraceEnabled) trace(s"After read consistent hash filter, members are: $members")
-
-      // Write members
-      var indexCount = -1
-      writeUnsignedInt(members.size, buf)
-      val indexedMembers = members.map { case (addr, serverAddr) =>
-         writeString(serverAddr.host, buf)
-         writeUnsignedShort(serverAddr.port, buf)
-         indexCount += 1
-         addr -> indexCount // easier indexing
+      if (isTraceEnabled) {
+         trace(s"Topology cache contains: ${h.serverEndpointsMap}")
+         trace(s"After read consistent hash filter, members are: $members")
       }
 
-      // Write segment information
-      val numSegments = ch.getNumSegments
-      buf.writeByte(h.hashFunction) // Hash function
-      writeUnsignedInt(numSegments, buf)
+      if (members.isEmpty) {
+         logNoMembersInHashTopology(ch, h.serverEndpointsMap.toString())
+         buf.writeByte(0) // Topology not changed
+      } else {
+         trace("Write hash distribution change response header %s", h)
+         buf.writeByte(1) // Topology changed
+         writeUnsignedInt(h.topologyId, buf) // Topology ID
 
-      for (segmentId <- 0 until numSegments) {
-         val owners = ch.locateOwnersForSegment(segmentId).filter(members.contains)
-         val numOwnersToSend = Math.min(2, owners.size())
-         buf.writeByte(numOwnersToSend)
-         owners.take(numOwnersToSend).foreach { ownerAddr =>
-            indexedMembers.get(ownerAddr) match {
-               case Some(index) => writeUnsignedInt(index, buf)
-               case None => // Do not add to indexes
+         // Write members
+         var indexCount = -1
+         writeUnsignedInt(members.size, buf)
+         val indexedMembers = members.map { case (addr, serverAddr) =>
+            writeString(serverAddr.host, buf)
+            writeUnsignedShort(serverAddr.port, buf)
+            indexCount += 1
+            addr -> indexCount // easier indexing
+         }
+
+         // Write segment information
+         val numSegments = ch.getNumSegments
+         buf.writeByte(h.hashFunction) // Hash function
+         writeUnsignedInt(numSegments, buf)
+
+         for (segmentId <- 0 until numSegments) {
+            val owners = ch.locateOwnersForSegment(segmentId).filter(members.contains)
+            val ownersSize = owners.size
+            if (ownersSize == 0) {
+               // When sending partial updates, number of owners could be 0,
+               // in which case just take the first member in the list.
+               buf.writeByte(1)
+               writeUnsignedInt(0, buf)
+            } else {
+               buf.writeByte(ownersSize)
+               owners.foreach { ownerAddr =>
+                  indexedMembers.get(ownerAddr) match {
+                     case Some(index) => writeUnsignedInt(index, buf)
+                     case None => // Do not add to indexes
+                  }
+               }
             }
          }
       }
@@ -169,23 +188,33 @@ object Encoder2x extends AbstractVersionedEncoder with Constants with Log {
       // the topology cache is updated.
       val cacheMembers = rpcManager.getMembers
       val serverEndpoints = addressCache.toMap
+
       var topologyId = currentTopologyId
+      val isTrace = isTraceEnabled
+
+      if (isTrace) {
+         tracef("Check for partial topologies: members=%s, endpoints=%s, client-topology=%s, server-topology=%s",
+            cacheMembers, serverEndpoints, r.topologyId, topologyId)
+      }
+
       if (!serverEndpoints.keySet.containsAll(cacheMembers)) {
          // At least one cache member is missing from the topology cache
          val clientTopologyId = r.topologyId
          if (currentTopologyId - clientTopologyId < 2) {
+            if (isTrace) trace("Postpone topology update")
             return None // Postpone topology update
          } else {
             // Send partial topology update
             topologyId -= 1
+            if (isTrace) trace("Send partial topology update with topology id %s", topologyId)
          }
       }
-
+      val numSegments = Option(SecurityActions.getCacheDistributionManager(cache)).map(_.getReadConsistentHash).map(_.getNumSegments).getOrElse(0)
       val config = SecurityActions.getCacheConfiguration(cache)
       if (r.clientIntel == INTELLIGENCE_TOPOLOGY_AWARE || !config.clustering().cacheMode().isDistributed) {
-         Some(TopologyAwareResponse(topologyId, serverEndpoints))
+         Some(TopologyAwareResponse(topologyId, serverEndpoints, numSegments))
       } else {
-         Some(HashDistAware20Response(topologyId, serverEndpoints, DEFAULT_CONSISTENT_HASH_VERSION))
+         Some(HashDistAware20Response(topologyId, serverEndpoints, numSegments, DEFAULT_CONSISTENT_HASH_VERSION))
       }
    }
 
@@ -250,6 +279,17 @@ object Encoder2x extends AbstractVersionedEncoder with Constants with Log {
                }
                buf.writeByte(0) // Done
             }
+         case g: GetAllResponse =>
+           if (isTraceEnabled)
+             log.trace("About to respond to getAll request")
+           if (g.status == Success) {
+             writeUnsignedInt(g.entries.size, buf)
+             val iterator = asScalaIterator(g.entries.iterator)
+             for (entry <- iterator) {
+                writeRangedBytes(entry._1, buf)
+                writeRangedBytes(entry._2, buf)
+             }
+           }
          case g: GetResponse =>
             if (g.status == Success) writeRangedBytes(g.data.get, buf)
          case q: QueryResponse =>
@@ -270,10 +310,20 @@ object Encoder2x extends AbstractVersionedEncoder with Constants with Log {
             }
          }
          case s: SizeResponse => writeUnsignedLong(s.size, buf)
+         case e: ExecResponse =>
+            writeRangedBytes(e.result, buf)
+         case r: IterationStartResponse => writeString(r.iterationId, buf)
+         case r: IterationNextResponse =>
+            writeRangedBytes(r.iterationResult.segmentsToBytes, buf)
+            val entries = r.iterationResult.entrySeq
+            writeUnsignedInt(entries.size, buf)
+            entries.foreach { e =>
+               writeRangedBytes(e._1.asInstanceOf[Bytes],buf)
+               writeRangedBytes(e._2.asInstanceOf[Bytes],buf)
+            }
          case e: ErrorResponse => writeString(e.msg, buf)
          case _ => if (buf == null)
             throw new IllegalArgumentException("Response received is unknown: " + r)
       }
    }
-
 }

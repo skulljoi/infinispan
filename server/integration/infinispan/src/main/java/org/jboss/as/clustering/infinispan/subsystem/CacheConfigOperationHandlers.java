@@ -22,20 +22,12 @@
 
 package org.jboss.as.clustering.infinispan.subsystem;
 
-import static org.jboss.as.clustering.infinispan.subsystem.EvictionResource.EVICTION_ATTRIBUTES;
-import static org.jboss.as.clustering.infinispan.subsystem.ExpirationResource.EXPIRATION_ATTRIBUTES;
-import static org.jboss.as.clustering.infinispan.subsystem.LockingResource.LOCKING_ATTRIBUTES;
-import static org.jboss.as.clustering.infinispan.subsystem.PartitionHandlingResource.PARTITION_HANDLING_ATTRIBUTES;
-import static org.jboss.as.clustering.infinispan.subsystem.StateTransferResource.STATE_TRANSFER_ATTRIBUTES;
-import static org.jboss.as.clustering.infinispan.subsystem.StoreWriteBehindResource.WRITE_BEHIND_ATTRIBUTES;
-import static org.jboss.as.clustering.infinispan.subsystem.TransactionResource.TRANSACTION_ATTRIBUTES;
-import static org.jboss.as.clustering.infinispan.subsystem.TransportResource.TRANSPORT_ATTRIBUTES;
-import static org.jboss.as.clustering.infinispan.subsystem.LevelDBExpirationResource.LEVELDB_EXPIRATION_ATTRIBUTES;
 import static org.jboss.as.clustering.infinispan.subsystem.LevelDBCompressionResource.LEVELDB_COMPRESSION_ATTRIBUTES;
+import static org.jboss.as.clustering.infinispan.subsystem.LevelDBExpirationResource.LEVELDB_EXPIRATION_ATTRIBUTES;
 import static org.jboss.as.clustering.infinispan.subsystem.LevelDBImplementationResource.LEVELDB_IMPLEMENTATION_ATTRIBUTES;
+import static org.jboss.as.clustering.infinispan.subsystem.StoreWriteBehindResource.WRITE_BEHIND_ATTRIBUTES;
 
 import java.util.Arrays;
-import java.util.List;
 
 import org.jboss.as.clustering.infinispan.InfinispanMessages;
 import org.jboss.as.controller.AbstractAddStepHandler;
@@ -45,11 +37,9 @@ import org.jboss.as.controller.OperationFailedException;
 import org.jboss.as.controller.OperationStepHandler;
 import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.PathElement;
-import org.jboss.as.controller.ServiceVerificationHandler;
 import org.jboss.as.controller.registry.Resource;
 import org.jboss.dmr.ModelNode;
 import org.jboss.dmr.Property;
-import org.jboss.msc.service.ServiceController;
 
 /**
  * Common code for handling the following cache configuration elements
@@ -59,17 +49,7 @@ import org.jboss.msc.service.ServiceController;
  * @author William Burns (c) 2013 Red Hat Inc.
  */
 public class CacheConfigOperationHandlers {
-
-    static final OperationStepHandler TRANSPORT_ADD = new CacheConfigAdd(TRANSPORT_ATTRIBUTES);
     static final OperationStepHandler CONTAINER_SECURITY_ADD = new CacheConfigAdd();
-    static final OperationStepHandler LOCKING_ADD = new CacheConfigAdd(LOCKING_ATTRIBUTES);
-    static final OperationStepHandler TRANSACTION_ADD = new CacheConfigAdd(TRANSACTION_ATTRIBUTES);
-    static final OperationStepHandler EVICTION_ADD = new CacheConfigAdd(EVICTION_ATTRIBUTES);
-    static final OperationStepHandler EXPIRATION_ADD = new CacheConfigAdd(EXPIRATION_ATTRIBUTES);
-    static final OperationStepHandler STATE_TRANSFER_ADD = new CacheConfigAdd(STATE_TRANSFER_ATTRIBUTES);
-    static final OperationStepHandler CACHE_SECURITY_ADD = new CacheConfigAdd();
-    static final OperationStepHandler PARTITION_HANDLING_ADD = new CacheConfigAdd(PARTITION_HANDLING_ATTRIBUTES);
-
 
     static final OperationStepHandler LOADER_ADD = new CacheLoaderAdd();
     static final OperationStepHandler LOADER_PROPERTY_ADD = new CacheConfigAdd(new AttributeDefinition[]{LoaderPropertyResource.VALUE});
@@ -111,12 +91,12 @@ public class CacheConfigOperationHandlers {
         }
 
         @Override
-        protected void performRuntime(OperationContext context, ModelNode operation, ModelNode model, ServiceVerificationHandler verificationHandler, List<ServiceController<?>> newControllers) throws OperationFailedException {
-            super.performRuntime(context, operation, model, verificationHandler, newControllers);
+        protected void performRuntime(OperationContext context, ModelNode operation, ModelNode model) throws OperationFailedException {
+            super.performRuntime(context, operation, model);
             // once we add a cache configuration, we need to restart all the services for the changes to take effect
             context.reloadRequired();
         }
-     }
+    }
 
     /**
      * Base class for adding cache loaders.

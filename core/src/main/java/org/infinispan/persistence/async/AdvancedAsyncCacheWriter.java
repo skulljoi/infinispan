@@ -22,13 +22,19 @@ public class AdvancedAsyncCacheWriter extends AsyncCacheWriter implements Advanc
 
    @Override
    public void clear() {
-      stateLock.writeLock(1);
+      stateLock.writeLock(0);
       try {
+         assertNotStopped();
          state.set(newState(true, state.get().next));
       } finally {
          stateLock.reset(1);
          stateLock.writeUnlock();
       }
+   }
+
+   @Override
+   protected void clearStore() {
+      advancedWriter().clear();
    }
 
    private AdvancedCacheWriter advancedWriter() {

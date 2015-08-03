@@ -20,7 +20,7 @@ public interface SearchManager {
     * Experimental! Obtains the factory for DSL-based queries backed by Lucene indexes.
     *
     * @return a factory capable of building queries for the cache this SearchManager belongs to
-    * @deprecated see {@link Search#getQueryFactory}
+    * @deprecated see alternative {@link Search#getQueryFactory}. This method will be removed in Infinispan 8.0.
     */
    QueryFactory<LuceneQuery> getQueryFactory();
 
@@ -107,5 +107,11 @@ public interface SearchManager {
     * @param entityType The class of the entity to remove.
     */
    void purge(Class<?> entityType);
+
+   /**
+    * This method gives access to internal Infinispan types, and should not be normally needed.
+    * The API of the internal types can (and probably will) change without notice.
+    */
+   <T> T unwrap(Class<T> cls);
 
 }

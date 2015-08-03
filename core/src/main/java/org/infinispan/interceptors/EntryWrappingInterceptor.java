@@ -1,26 +1,24 @@
 package org.infinispan.interceptors;
 
+import static org.infinispan.commons.util.Util.toStr;
+
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.DataCommand;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
+import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
-import org.infinispan.commands.write.ClearCommand;
-import org.infinispan.commands.write.DataWriteCommand;
-import org.infinispan.commands.write.EvictCommand;
-import org.infinispan.commands.write.InvalidateCommand;
-import org.infinispan.commands.write.InvalidateL1Command;
-import org.infinispan.commands.write.PutKeyValueCommand;
-import org.infinispan.commands.write.PutMapCommand;
-import org.infinispan.commands.write.RemoveCommand;
-import org.infinispan.commands.write.ReplaceCommand;
-import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commands.write.*;
 import org.infinispan.commons.util.concurrent.ParallelIterableMap;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.EntryFactory;
@@ -46,13 +44,6 @@ import org.infinispan.statetransfer.StateTransferLock;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.infinispan.xsite.statetransfer.XSiteStateConsumer;
-
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Set;
-
-import static org.infinispan.commons.util.Util.toStr;
 
 /**
  * Interceptor in charge with wrapping entries and add them in caller's context.
@@ -84,7 +75,7 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
    }
 
    @Inject
-   public void init(EntryFactory entryFactory, DataContainer dataContainer, ClusteringDependentLogic cdl,
+   public void init(EntryFactory entryFactory, DataContainer<Object, Object> dataContainer, ClusteringDependentLogic cdl,
                     CommandsFactory commandFactory, StateConsumer stateConsumer, StateTransferLock stateTransferLock,
                     XSiteStateConsumer xSiteStateConsumer, GroupManager groupManager) {
       this.entryFactory = entryFactory;
@@ -133,7 +124,7 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       return visitDataReadCommand(ctx, command);
    }
 
-   private final Object visitDataReadCommand(InvocationContext ctx, AbstractDataCommand command) throws Throwable {
+   private Object visitDataReadCommand(InvocationContext ctx, AbstractDataCommand command) throws Throwable {
       try {
          entryFactory.wrapEntryForReading(ctx, command.getKey(), null);
          return invokeNextInterceptor(ctx, command);
@@ -145,6 +136,25 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
             CacheEntry entry = ctx.lookupEntry(command.getKey());
             if (entry != null) {
                entry.setSkipLookup(true);
+            }
+         }
+      }
+   }
+
+   @Override
+   public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable {
+      try {
+         for (Object key : command.getKeys()) {
+            entryFactory.wrapEntryForReading(ctx, key, null);
+         }
+         return invokeNextInterceptor(ctx, command);
+      } finally {
+         if (ctx.isInTxScope()) {
+            for (Object key : command.getKeys()) {
+               CacheEntry entry = ctx.lookupEntry(key);
+               if (entry != null) {
+                  entry.setSkipLookup(true);
+               }
             }
          }
       }
@@ -164,9 +174,7 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
 
    @Override
    public final Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
-      for (InternalCacheEntry entry : dataContainer.entrySet())
-         entryFactory.wrapEntryForClear(ctx, entry.getKey());
-      return setSkipRemoteGetsAndInvokeNextForClear(ctx, command);
+      return invokeNextAndApplyChanges(ctx, command, command.getMetadata());
    }
 
    @Override
@@ -298,14 +306,10 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       }
       final KeyFilter<Object> keyFilter = new CompositeKeyFilter<>(new GroupFilter<>(groupName, groupManager),
                                                                    new CollectionKeyFilter<>(ctx.getLookedUpEntries().keySet()));
-      dataContainer.executeTask(keyFilter,
-                                new ParallelIterableMap.KeyValueAction<Object, InternalCacheEntry<Object, Object>>() {
-         @Override
-         public void apply(Object o, InternalCacheEntry<Object, Object> internalCacheEntry) {
-            synchronized (ctx) {
-               //the process can be made in multiple threads, so we need to synchronize in the context.
-               entryFactory.wrapEntryForReading(ctx, o, internalCacheEntry).setSkipLookup(true);
-            }
+      dataContainer.executeTask(keyFilter, (o, internalCacheEntry) -> {
+         synchronized (ctx) {
+            //the process can be made in multiple threads, so we need to synchronize in the context.
+            entryFactory.wrapEntryForReading(ctx, o, internalCacheEntry).setSkipLookup(true);
          }
       });
       return invokeNextInterceptor(ctx, command);
@@ -327,18 +331,12 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       return null;
    }
 
-   private boolean hasClearCommand(InvocationContext ctx, FlagAffectedCommand command) {
-      return ctx instanceof TxInvocationContext ?
-            ((TxInvocationContext) ctx).getCacheTransaction().hasModification(ClearCommand.class) :
-            command instanceof ClearCommand;
-   }
-
    protected final void commitContextEntries(InvocationContext ctx, FlagAffectedCommand command, Metadata metadata) {
       final Flag stateTransferFlag = extractStateTransferFlag(ctx, command);
 
       if (stateTransferFlag == null) {
          //it is a normal operation
-         stopStateTransferIfNeeded(ctx, command);
+         stopStateTransferIfNeeded(command);
       }
 
       if (ctx instanceof SingleKeyNonTxInvocationContext) {
@@ -369,8 +367,8 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       cdl.commitEntry(entry, metadata, command, ctx, stateTransferFlag, l1Invalidation);
    }
 
-   private void stopStateTransferIfNeeded(InvocationContext context, FlagAffectedCommand command) {
-      if (hasClearCommand(context, command)) {
+   private void stopStateTransferIfNeeded(FlagAffectedCommand command) {
+      if (command instanceof ClearCommand) {
          // If we are committing a ClearCommand now then no keys should be written by state transfer from
          // now on until current rebalance ends.
          if (stateConsumer != null) {
@@ -430,29 +428,6 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
    /**
     * Locks the value for the keys accessed by the command to avoid being override from a remote get.
     */
-   private Object setSkipRemoteGetsAndInvokeNextForClear(InvocationContext context, ClearCommand command) throws Throwable {
-      boolean txScope = context.isInTxScope();
-      if (txScope) {
-         for (CacheEntry entry : context.getLookedUpEntries().values()) {
-            if (entry != null) {
-               entry.setSkipLookup(true);
-            }
-         }
-      }
-      Object retVal = invokeNextAndApplyChanges(context, command, command.getMetadata());
-      if (txScope) {
-         for (CacheEntry entry : context.getLookedUpEntries().values()) {
-            if (entry != null) {
-               entry.setSkipLookup(true);
-            }
-         }
-      }
-      return retVal;
-   }
-
-   /**
-    * Locks the value for the keys accessed by the command to avoid being override from a remote get.
-    */
    private Object setSkipRemoteGetsAndInvokeNextForPutMapCommand(InvocationContext context, PutMapCommand command) throws Throwable {
       Object retVal = invokeNextAndApplyChanges(context, command, command.getMetadata());
       if (context.isInTxScope()) {
@@ -484,25 +459,8 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
    private final class EntryWrappingVisitor extends AbstractVisitor {
 
       @Override
-      public Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
-         boolean wrapped = false;
-         for (Object key : dataContainer.keySet()) {
-            entryFactory.wrapEntryForClear(ctx, key);
-            wrapped = true;
-         }
-         if (wrapped)
-            invokeNextInterceptor(ctx, command);
-         if (stateConsumer != null && !ctx.isInTxScope()) {
-            // If a non-tx ClearCommand was executed successfully we must stop recording updated keys and do not
-            // allow any further updates to be written by state transfer from now on until current rebalance ends.
-            stateConsumer.stopApplyingState();
-         }
-         return null;
-      }
-
-      @Override
       public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
-         Map<Object, Object> newMap = new HashMap<Object, Object>(4);
+         Map<Object, Object> newMap = new HashMap<>(4);
          for (Map.Entry<Object, Object> e : command.getMap().entrySet()) {
             Object key = e.getKey();
             if (cdl.localNodeIsOwner(key)) {

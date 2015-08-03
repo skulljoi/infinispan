@@ -22,7 +22,6 @@
 
 package org.jboss.as.clustering.infinispan.subsystem;
 
-import org.jboss.as.controller.AbstractAddStepHandler;
 import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.OperationStepHandler;
 import org.jboss.as.controller.PathElement;
@@ -42,24 +41,14 @@ import org.jboss.dmr.ModelType;
  *
  * @author Richard Achmatowicz (c) 2011 Red Hat Inc.
  */
-public class ClusteredCacheResource extends CacheResource  {
-
-    // attributes
-    static final SimpleAttributeDefinition ASYNC_MARSHALLING =
-            new SimpleAttributeDefinitionBuilder(ModelKeys.ASYNC_MARSHALLING, ModelType.BOOLEAN, true)
-                    .setXmlName(Attribute.ASYNC_MARSHALLING.getLocalName())
-                    .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
-                    .setDefaultValue(new ModelNode().set(false))
-                    .build();
-
+public class ClusteredCacheResource extends CacheResource {
     // the attribute definition for the cache mode
     static final SimpleAttributeDefinition MODE =
             new SimpleAttributeDefinitionBuilder(ModelKeys.MODE, ModelType.STRING, false)
                     .setXmlName(Attribute.MODE.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
-                    .setValidator(new EnumValidator<Mode>(Mode.class, false, true))
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
+                    .setValidator(new EnumValidator<>(Mode.class, false, true))
                     .build();
 
     static final SimpleAttributeDefinition QUEUE_FLUSH_INTERVAL =
@@ -67,7 +56,7 @@ public class ClusteredCacheResource extends CacheResource  {
                     .setXmlName(Attribute.QUEUE_FLUSH_INTERVAL.getLocalName())
                     .setMeasurementUnit(MeasurementUnit.MILLISECONDS)
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(10))
                     .build();
 
@@ -75,7 +64,7 @@ public class ClusteredCacheResource extends CacheResource  {
             new SimpleAttributeDefinitionBuilder(ModelKeys.QUEUE_SIZE, ModelType.INT, true)
                     .setXmlName(Attribute.QUEUE_SIZE.getLocalName())
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(0))
                     .build();
 
@@ -84,14 +73,13 @@ public class ClusteredCacheResource extends CacheResource  {
                     .setXmlName(Attribute.REMOTE_TIMEOUT.getLocalName())
                     .setMeasurementUnit(MeasurementUnit.MILLISECONDS)
                     .setAllowExpression(true)
-                    .setFlags(AttributeAccess.Flag.RESTART_ALL_SERVICES)
+                    .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
                     .setDefaultValue(new ModelNode().set(15000))
                     .build();
 
-    static final AttributeDefinition[] CLUSTERED_CACHE_ATTRIBUTES = { ASYNC_MARSHALLING, MODE, QUEUE_SIZE, QUEUE_FLUSH_INTERVAL, REMOTE_TIMEOUT};
+    static final AttributeDefinition[] CLUSTERED_CACHE_ATTRIBUTES = { MODE, QUEUE_SIZE, QUEUE_FLUSH_INTERVAL, REMOTE_TIMEOUT };
 
-
-    public ClusteredCacheResource(PathElement pathElement, ResourceDescriptionResolver descriptionResolver, AbstractAddStepHandler addHandler, OperationStepHandler removeHandler, ResolvePathHandler resolvePathHandler, boolean runtimeRegistration) {
+    public ClusteredCacheResource(PathElement pathElement, ResourceDescriptionResolver descriptionResolver, CacheAdd addHandler, OperationStepHandler removeHandler, ResolvePathHandler resolvePathHandler, boolean runtimeRegistration) {
         super(pathElement, descriptionResolver, addHandler, removeHandler, resolvePathHandler, runtimeRegistration);
     }
 
@@ -99,20 +87,14 @@ public class ClusteredCacheResource extends CacheResource  {
     public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
         super.registerAttributes(resourceRegistration);
 
-        // do we really need a special handler here?
-        final OperationStepHandler writeHandler = new CacheWriteAttributeHandler(CLUSTERED_CACHE_ATTRIBUTES);
+        final OperationStepHandler restartWriteHandler = new RestartCacheWriteAttributeHandler(getPathElement().getKey(), getCacheAddHandler(), CLUSTERED_CACHE_ATTRIBUTES);
         for (AttributeDefinition attr : CLUSTERED_CACHE_ATTRIBUTES) {
-            resourceRegistration.registerReadWriteAttribute(attr, CacheReadAttributeHandler.INSTANCE, writeHandler);
+            resourceRegistration.registerReadWriteAttribute(attr, CacheReadAttributeHandler.INSTANCE, restartWriteHandler);
         }
 
         if (runtimeRegistration) {
             CacheMetricsHandler.INSTANCE.registerClusteredMetrics(resourceRegistration);
             ClusteredCacheMetricsHandler.INSTANCE.registerClusteredMetrics(resourceRegistration);
         }
-    }
-
-    @Override
-    public void registerOperations(ManagementResourceRegistration resourceRegistration) {
-        super.registerOperations(resourceRegistration);
     }
 }

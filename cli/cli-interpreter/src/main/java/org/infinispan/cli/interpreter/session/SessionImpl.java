@@ -17,7 +17,6 @@ import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.rpc.RpcManager;
-import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.util.TimeService;
 import org.infinispan.util.logging.LogFactory;
 
@@ -106,10 +105,9 @@ public class SessionImpl implements Session {
          CommandsFactory factory = clusteredCache.getComponentRegistry().getComponent(CommandsFactory.class);
 
          CreateCacheCommand ccc = factory.buildCreateCacheCommand(cacheName, baseCacheName);
-         StateTransferManager transferManager = clusteredCache.getComponentRegistry().getComponent(StateTransferManager.class);
          try {
             rpc.invokeRemotely(null, ccc, rpc.getDefaultRpcOptions(true));
-            ccc.init(cacheManager, transferManager);
+            ccc.init(cacheManager);
             ccc.perform(null);
          } catch (Throwable e) {
             throw log.cannotCreateClusteredCaches(e, cacheName);

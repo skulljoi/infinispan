@@ -15,6 +15,7 @@ import org.infinispan.factories.annotations.Stop;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.registry.ClusterRegistry;
+import org.infinispan.registry.InternalCacheRegistry;
 import org.infinispan.registry.ScopedKey;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
 import org.infinispan.transaction.TransactionMode;
@@ -25,6 +26,7 @@ import javax.transaction.InvalidTransactionException;
 import javax.transaction.SystemException;
 import javax.transaction.Transaction;
 import javax.transaction.TransactionManager;
+
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -45,13 +47,15 @@ public class ClusterRegistryImpl<S, K, V> implements ClusterRegistry<S, K, V> {
    private static final Log log = LogFactory.getLog(ClusterRegistryImpl.class);
 
    private EmbeddedCacheManager cacheManager;
+   private InternalCacheRegistry internalCacheRegistry;
    private volatile Cache<ScopedKey<S, K>, V> clusterRegistryCache;
    private volatile AdvancedCache<ScopedKey<S, K>, V> clusterRegistryCacheWithoutReturn;
    private volatile TransactionManager transactionManager;
 
    @Inject
-   public void init(EmbeddedCacheManager cacheManager) {
+   public void init(EmbeddedCacheManager cacheManager, InternalCacheRegistry internalCacheRegistry) {
       this.cacheManager = cacheManager;
+      this.internalCacheRegistry = internalCacheRegistry;
    }
 
    @Stop(priority=1)
@@ -249,7 +253,7 @@ public class ClusterRegistryImpl<S, K, V> implements ClusterRegistry<S, K, V> {
       if (clusterRegistryCache == null) {
          synchronized (this) {
             if (clusterRegistryCache != null) return;
-            SecurityActions.defineConfiguration(cacheManager, GLOBAL_REGISTRY_CACHE_NAME, getRegistryCacheConfig());
+            internalCacheRegistry.registerInternalCache(GLOBAL_REGISTRY_CACHE_NAME, getRegistryCacheConfig());
             clusterRegistryCache = SecurityActions.getRegistryCache(cacheManager);
             clusterRegistryCacheWithoutReturn = clusterRegistryCache.getAdvancedCache().withFlags(Flag.IGNORE_RETURN_VALUES);
             transactionManager = clusterRegistryCacheWithoutReturn.getTransactionManager();
@@ -269,8 +273,9 @@ public class ClusterRegistryImpl<S, K, V> implements ClusterRegistry<S, K, V> {
             .transactionManagerLookup(null).invocationBatching().enable();
 
       //fetch the state (redundant as state transfer this is enabled by default, keep it here to document the intention)
-      configurationBuilder.clustering().stateTransfer().fetchInMemoryState(true);
+      configurationBuilder.clustering().stateTransfer().fetchInMemoryState(cacheMode.needsStateTransfer());
 
+      configurationBuilder.security().authorization().disable();
       return configurationBuilder.build();
    }
 

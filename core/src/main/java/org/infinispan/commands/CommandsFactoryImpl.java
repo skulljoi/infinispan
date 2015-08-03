@@ -1,11 +1,11 @@
 package org.infinispan.commands;
 
 import org.infinispan.Cache;
-import org.infinispan.commands.read.EntryRetrievalCommand;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.distribution.group.GroupManager;
+import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.iteration.impl.EntryRequestCommand;
 import org.infinispan.iteration.impl.EntryResponseCommand;
 import org.infinispan.iteration.impl.EntryRetriever;
@@ -17,12 +17,13 @@ import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.KeySetCommand;
 import org.infinispan.commands.read.MapCombineCommand;
 import org.infinispan.commands.read.ReduceCommand;
 import org.infinispan.commands.read.SizeCommand;
-import org.infinispan.commands.read.ValuesCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
+import org.infinispan.commands.remote.ClusteredGetAllCommand;
 import org.infinispan.commands.remote.MultipleRpcCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
 import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
@@ -74,6 +75,11 @@ import org.infinispan.statetransfer.StateChunk;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.StateTransferManager;
+import org.infinispan.stream.impl.ClusterStreamManager;
+import org.infinispan.stream.impl.LocalStreamManager;
+import org.infinispan.stream.impl.StreamRequestCommand;
+import org.infinispan.stream.impl.StreamResponseCommand;
+import org.infinispan.stream.impl.StreamSegmentResponseCommand;
 import org.infinispan.transaction.impl.RemoteTransaction;
 import org.infinispan.transaction.impl.TransactionTable;
 import org.infinispan.transaction.xa.DldGlobalTransaction;
@@ -118,7 +124,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
 
 
    private DataContainer dataContainer;
-   private CacheNotifier notifier;
+   private CacheNotifier<Object, Object> notifier;
    private Cache<Object, Object> cache;
    private String cacheName;
    private boolean totalOrderProtocol;
@@ -137,18 +143,19 @@ public class CommandsFactoryImpl implements CommandsFactory {
    private StateTransferManager stateTransferManager;
    private BackupSender backupSender;
    private CancellationService cancellationService;
-   private TimeService timeService;
    private XSiteStateProvider xSiteStateProvider;
    private XSiteStateConsumer xSiteStateConsumer;
    private XSiteStateTransferManager xSiteStateTransferManager;
    private EntryRetriever entryRetriever;
    private GroupManager groupManager;
-   private PartitionHandlingManager partitionHandlingManager;
+   private LocalStreamManager localStreamManager;
+   private ClusterStreamManager clusterStreamManager;
+   private ClusteringDependentLogic clusteringDependentLogic;
 
    private Map<Byte, ModuleCommandInitializer> moduleCommandInitializers;
 
    @Inject
-   public void setupDependencies(DataContainer container, CacheNotifier notifier, Cache<Object, Object> cache,
+   public void setupDependencies(DataContainer container, CacheNotifier<Object, Object> notifier, Cache<Object, Object> cache,
                                  InterceptorChain interceptorChain, DistributionManager distributionManager,
                                  InvocationContextFactory icf, TransactionTable txTable, Configuration configuration,
                                  @ComponentName(KnownComponentNames.MODULE_COMMAND_INITIALIZERS) Map<Byte, ModuleCommandInitializer> moduleCommandInitializers,
@@ -156,7 +163,10 @@ public class CommandsFactoryImpl implements CommandsFactory {
                                  LockManager lockManager, InternalEntryFactory entryFactory, MapReduceManager mapReduceManager, 
                                  StateTransferManager stm, BackupSender backupSender, CancellationService cancellationService,
                                  TimeService timeService, XSiteStateProvider xSiteStateProvider, XSiteStateConsumer xSiteStateConsumer,
-                                 XSiteStateTransferManager xSiteStateTransferManager, EntryRetriever entryRetriever, GroupManager groupManager, PartitionHandlingManager partitionHandlingManager) {
+                                 XSiteStateTransferManager xSiteStateTransferManager, EntryRetriever entryRetriever,
+                                 GroupManager groupManager, PartitionHandlingManager partitionHandlingManager,
+                                 LocalStreamManager localStreamManager, ClusterStreamManager clusterStreamManager,
+                                 ClusteringDependentLogic clusteringDependentLogic) {
       this.dataContainer = container;
       this.notifier = notifier;
       this.cache = cache;
@@ -175,13 +185,14 @@ public class CommandsFactoryImpl implements CommandsFactory {
       this.stateTransferManager = stm;
       this.backupSender = backupSender;
       this.cancellationService = cancellationService;
-      this.timeService = timeService;
       this.xSiteStateConsumer = xSiteStateConsumer;
       this.xSiteStateProvider = xSiteStateProvider;
       this.xSiteStateTransferManager = xSiteStateTransferManager;
-      this.partitionHandlingManager = partitionHandlingManager;
       this.entryRetriever = entryRetriever;
       this.groupManager = groupManager;
+      this.localStreamManager = localStreamManager;
+      this.clusterStreamManager = clusterStreamManager;
+      this.clusteringDependentLogic = clusteringDependentLogic;
    }
 
    @Start(priority = 1)
@@ -194,32 +205,32 @@ public class CommandsFactoryImpl implements CommandsFactory {
    @Override
    public PutKeyValueCommand buildPutKeyValueCommand(Object key, Object value, Metadata metadata, Set<Flag> flags) {
       return new PutKeyValueCommand(key, value, false, notifier, metadata, flags,
-            configuration.dataContainer().valueEquivalence());
+            configuration.dataContainer().valueEquivalence(), generateUUID());
    }
 
    @Override
    public RemoveCommand buildRemoveCommand(Object key, Object value, Set<Flag> flags) {
-      return new RemoveCommand(key, value, notifier, flags, configuration.dataContainer().valueEquivalence());
+      return new RemoveCommand(key, value, notifier, flags, configuration.dataContainer().valueEquivalence(), generateUUID());
    }
 
    @Override
    public InvalidateCommand buildInvalidateCommand(Set<Flag> flags, Object... keys) {
-      return new InvalidateCommand(notifier, flags, keys);
+      return new InvalidateCommand(notifier, flags, generateUUID(), keys);
    }
 
    @Override
    public InvalidateCommand buildInvalidateFromL1Command(Set<Flag> flags, Collection<Object> keys) {
-      return new InvalidateL1Command(dataContainer, configuration, distributionManager, notifier, flags, keys);
+      return new InvalidateL1Command(dataContainer, distributionManager, notifier, flags, keys, generateUUID());
    }
 
    @Override
    public InvalidateCommand buildInvalidateFromL1Command(Address origin, Set<Flag> flags, Collection<Object> keys) {
-      return new InvalidateL1Command(origin, dataContainer, configuration, distributionManager, notifier, flags, keys);
+      return new InvalidateL1Command(origin, dataContainer, distributionManager, notifier, flags, keys, generateUUID());
    }
 
    @Override
    public ReplaceCommand buildReplaceCommand(Object key, Object oldValue, Object newValue, Metadata metadata, Set<Flag> flags) {
-      return new ReplaceCommand(key, oldValue, newValue, notifier, metadata, flags, configuration.dataContainer().valueEquivalence());
+      return new ReplaceCommand(key, oldValue, newValue, notifier, metadata, flags, configuration.dataContainer().valueEquivalence(), generateUUID());
    }
 
    @Override
@@ -233,18 +244,8 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
-   public ValuesCommand buildValuesCommand(Set<Flag> flags) {
-      return new ValuesCommand(cache, flags);
-   }
-
-   @Override
    public EntrySetCommand buildEntrySetCommand(Set<Flag> flags) {
       return new EntrySetCommand(cache, flags);
-   }
-
-   @Override
-   public EntryRetrievalCommand buildEntryRetrievalCommand(Set<Flag> flags, KeyValueFilter filter) {
-      return new EntryRetrievalCommand(filter, entryRetriever, flags, cache);
    }
 
    @Override
@@ -253,18 +254,24 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
+   public GetAllCommand buildGetAllCommand(Collection<?> keys,
+         Set<Flag> flags, boolean returnEntries) {
+      return new GetAllCommand(keys, flags, returnEntries, entryFactory);
+   }
+
+   @Override
    public PutMapCommand buildPutMapCommand(Map<?, ?> map, Metadata metadata, Set<Flag> flags) {
-      return new PutMapCommand(map, notifier, metadata, flags);
+      return new PutMapCommand(map, notifier, metadata, flags, generateUUID());
    }
 
    @Override
    public ClearCommand buildClearCommand(Set<Flag> flags) {
-      return new ClearCommand(notifier, flags);
+      return new ClearCommand(notifier, dataContainer, flags);
    }
 
    @Override
    public EvictCommand buildEvictCommand(Object key, Set<Flag> flags) {
-      return new EvictCommand(key, notifier, flags);
+      return new EvictCommand(key, notifier, flags, generateUUID());
    }
 
    @Override
@@ -387,7 +394,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
             break;
          case ClearCommand.COMMAND_ID:
             ClearCommand cc = (ClearCommand) c;
-            cc.init(notifier);
+            cc.init(notifier, dataContainer);
             break;
          case ClusteredGetCommand.COMMAND_ID:
             ClusteredGetCommand clusteredGetCommand = (ClusteredGetCommand) c;
@@ -453,7 +460,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
             break;
          case CreateCacheCommand.COMMAND_ID:
             CreateCacheCommand createCacheCommand = (CreateCacheCommand)c;
-            createCacheCommand.init(cache.getCacheManager(), stateTransferManager);
+            createCacheCommand.init(cache.getCacheManager());
             break;
          case XSiteAdminCommand.COMMAND_ID:
             XSiteAdminCommand xSiteAdminCommand = (XSiteAdminCommand)c;
@@ -483,6 +490,23 @@ public class CommandsFactoryImpl implements CommandsFactory {
             GetKeysInGroupCommand getKeysInGroupCommand = (GetKeysInGroupCommand) c;
             getKeysInGroupCommand.setGroupManager(groupManager);
             break;
+         case ClusteredGetAllCommand.COMMAND_ID:
+            ClusteredGetAllCommand clusteredGetAllCommand = (ClusteredGetAllCommand) c;
+            clusteredGetAllCommand.init(icf, this, entryFactory, interceptorChain, txTable,
+                  configuration.dataContainer().keyEquivalence());
+            break;
+         case StreamRequestCommand.COMMAND_ID:
+            StreamRequestCommand streamRequestCommand = (StreamRequestCommand) c;
+            streamRequestCommand.inject(localStreamManager);
+            break;
+         case StreamResponseCommand.COMMAND_ID:
+            StreamResponseCommand streamResponseCommand = (StreamResponseCommand) c;
+            streamResponseCommand.inject(clusterStreamManager);
+            break;
+         case StreamSegmentResponseCommand.COMMAND_ID:
+            StreamSegmentResponseCommand streamSegmentResponseCommand = (StreamSegmentResponseCommand) c;
+            streamSegmentResponseCommand.inject(clusterStreamManager);
+            break;
          default:
             ModuleCommandInitializer mci = moduleCommandInitializers.get(c.getCommandId());
             if (mci != null) {
@@ -494,7 +518,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
-   public LockControlCommand buildLockControlCommand(Collection<Object> keys, Set<Flag> flags, GlobalTransaction gtx) {
+   public LockControlCommand buildLockControlCommand(Collection<?> keys, Set<Flag> flags, GlobalTransaction gtx) {
       return new LockControlCommand(keys, cacheName, flags, gtx);
    }
 
@@ -504,7 +528,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
-   public LockControlCommand buildLockControlCommand(Collection keys, Set<Flag> flags) {
+   public LockControlCommand buildLockControlCommand(Collection<?> keys, Set<Flag> flags) {
       return new LockControlCommand(keys,  cacheName, flags, null);
    }
 
@@ -562,7 +586,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
 
    @Override
    public ApplyDeltaCommand buildApplyDeltaCommand(Object deltaAwareValueKey, Delta delta, Collection keys) {
-      return new ApplyDeltaCommand(deltaAwareValueKey, delta, keys);
+      return new ApplyDeltaCommand(deltaAwareValueKey, delta, keys, generateUUID());
    }
 
    @Override
@@ -571,8 +595,8 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
-   public CreateCacheCommand buildCreateCacheCommand(String cacheNameToCreate, String cacheConfigurationName, boolean start, int size) {
-      return new CreateCacheCommand(cacheName, cacheNameToCreate, cacheConfigurationName, start, size);
+   public CreateCacheCommand buildCreateCacheCommand(String cacheNameToCreate, String cacheConfigurationName, int size) {
+      return new CreateCacheCommand(cacheName, cacheNameToCreate, cacheConfigurationName, size);
    }
 
    @Override
@@ -610,11 +634,12 @@ public class CommandsFactoryImpl implements CommandsFactory {
 
    @Override
    public <K, V, C> EntryRequestCommand<K, V, C> buildEntryRequestCommand(UUID identifier, Set<Integer> segments,
+                                                                    Set<K> keysToFilter,
                                                                     KeyValueFilter<? super K, ? super V> filter,
                                                                     Converter<? super K, ? super V, C> converter,
                                                                     Set<Flag> flags) {
       return new EntryRequestCommand<K, V, C>(cacheName, identifier, cache.getCacheManager().getAddress(), segments,
-                                              filter, converter, flags);
+                                              keysToFilter, filter, converter, flags);
    }
 
    @Override
@@ -631,8 +656,36 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
+   public <K> StreamRequestCommand<K> buildStreamRequestCommand(UUID id, boolean parallelStream,
+           StreamRequestCommand.Type type, Set<Integer> segments, Set<K> keys, Set<K> excludedKeys,
+           boolean includeLoader, Object terminalOperation) {
+      return new StreamRequestCommand<>(cacheName, cache.getCacheManager().getAddress(), id, parallelStream, type,
+              segments, keys, excludedKeys, includeLoader, terminalOperation);
+   }
+
+   @Override
+   public <R> StreamResponseCommand<R> buildStreamResponseCommand(UUID identifier, boolean complete,
+           Set<Integer> lostSegments, R response) {
+      if (lostSegments.isEmpty()) {
+         return new StreamResponseCommand<>(cacheName, cache.getCacheManager().getAddress(), identifier, complete,
+                 response);
+      } else {
+         return new StreamSegmentResponseCommand<>(cacheName, cache.getCacheManager().getAddress(), identifier,
+                 complete, response, lostSegments);
+      }
+   }
+
+   @Override
    public GetCacheEntryCommand buildGetCacheEntryCommand(Object key, Set<Flag> explicitFlags) {
       return new GetCacheEntryCommand(key, explicitFlags, entryFactory);
    }
 
+   @Override
+   public ClusteredGetAllCommand buildClusteredGetAllCommand(List<?> keys, Set<Flag> flags, GlobalTransaction gtx) {
+      return new ClusteredGetAllCommand(cacheName, keys, flags, gtx, configuration.dataContainer().keyEquivalence());
+   }
+
+   private CommandInvocationId generateUUID() {
+      return CommandInvocationId.generateId(clusteringDependentLogic.getAddress());
+   }
 }

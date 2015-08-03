@@ -2,18 +2,25 @@ package org.infinispan.commands;
 
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.read.DistributedExecuteCommand;
-import org.infinispan.commands.read.EntryRetrievalCommand;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
+import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.KeySetCommand;
 import org.infinispan.commands.read.SizeCommand;
-import org.infinispan.commands.read.ValuesCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
-import org.infinispan.commands.write.*;
+import org.infinispan.commands.write.ApplyDeltaCommand;
+import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EvictCommand;
+import org.infinispan.commands.write.InvalidateCommand;
+import org.infinispan.commands.write.InvalidateL1Command;
+import org.infinispan.commands.write.PutKeyValueCommand;
+import org.infinispan.commands.write.PutMapCommand;
+import org.infinispan.commands.write.RemoveCommand;
+import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 
@@ -48,13 +55,11 @@ public interface Visitor {
 
    Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable;
 
+   Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable;
+
    Object visitKeySetCommand(InvocationContext ctx, KeySetCommand command) throws Throwable;
 
-   Object visitValuesCommand(InvocationContext ctx, ValuesCommand command) throws Throwable;
-
    Object visitEntrySetCommand(InvocationContext ctx, EntrySetCommand command) throws Throwable;
-
-   Object visitEntryRetrievalCommand(InvocationContext ctx, EntryRetrievalCommand command) throws Throwable;
 
    // tx commands
 

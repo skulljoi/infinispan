@@ -8,7 +8,7 @@ import org.hibernate.search.backend.spi.LuceneIndexingParameters;
 import org.hibernate.search.backend.spi.LuceneIndexingParameters.ParameterSet;
 import org.hibernate.search.indexes.impl.NRTIndexManager;
 import org.hibernate.search.indexes.spi.IndexManager;
-import org.hibernate.search.infinispan.spi.InfinispanDirectoryProvider;
+import org.infinispan.hibernate.search.spi.InfinispanDirectoryProvider;
 import org.hibernate.search.spi.SearchIntegrator;
 import org.hibernate.search.store.DirectoryProvider;
 import org.hibernate.search.store.impl.FSDirectoryProvider;
@@ -64,7 +64,7 @@ public class TuningOptionsAppliedTest {
       Cache<Object, Object> cache = embeddedCacheManager.getCache("Indexed");
       cache.put("hey this type exists", new Person("id", "name", 3));
       SearchManager searchManager = Search.getSearchManager(cache);
-      return searchManager.getSearchFactory();
+      return searchManager.unwrap(SearchIntegrator.class);
    }
 
    private NRTIndexManager verifyShardingOptions(SearchIntegrator searchIntegrator, int expectedShards) {

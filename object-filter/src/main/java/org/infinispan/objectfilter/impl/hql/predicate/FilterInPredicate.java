@@ -3,6 +3,7 @@ package org.infinispan.objectfilter.impl.hql.predicate;
 import org.hibernate.hql.ast.spi.predicate.ComparisonPredicate;
 import org.hibernate.hql.ast.spi.predicate.InPredicate;
 import org.infinispan.objectfilter.impl.syntax.BooleanExpr;
+import org.infinispan.objectfilter.impl.syntax.ValueExpr;
 
 import java.util.List;
 
@@ -12,8 +13,11 @@ import java.util.List;
  */
 class FilterInPredicate extends InPredicate<BooleanExpr> {
 
-   public FilterInPredicate(String propertyName, List<Object> values) {
-      super(propertyName, values);
+   private final ValueExpr valueExpr;
+
+   public FilterInPredicate(ValueExpr valueExpr, List<Object> values) {
+      super(valueExpr.toJpaString(), values);
+      this.valueExpr = valueExpr;
    }
 
    @Override
@@ -22,7 +26,7 @@ class FilterInPredicate extends InPredicate<BooleanExpr> {
 
       for (Object element : values) {
          //todo need efficient implementation
-         FilterComparisonPredicate eq = new FilterComparisonPredicate(propertyName, ComparisonPredicate.Type.EQUALS, element);
+         FilterComparisonPredicate eq = new FilterComparisonPredicate(valueExpr, ComparisonPredicate.Type.EQUALS, element);
          predicate.add(eq);
       }
 

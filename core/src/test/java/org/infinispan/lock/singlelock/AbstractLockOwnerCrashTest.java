@@ -6,7 +6,6 @@ import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.tm.DummyTransaction;
 import org.testng.annotations.Test;
 
-import javax.transaction.Status;
 import javax.transaction.Transaction;
 
 /**
@@ -40,11 +39,10 @@ public abstract class AbstractLockOwnerCrashTest extends AbstractCrashTest {
                cache(1).put(k, "v");
                transaction = (DummyTransaction) tm(1).getTransaction();
                log.trace("Before preparing");
-               transaction.notifyBeforeCompletion();
                transaction.runPrepare();
                tm(1).suspend();
             } catch (Throwable e) {
-               e.printStackTrace();
+               log.errorf(e, "Error preparing transaction for key %s", k);
             }
          }
       });
@@ -72,7 +70,7 @@ public abstract class AbstractLockOwnerCrashTest extends AbstractCrashTest {
                cache(secondTxNode).put(k, "v2");
                tm(secondTxNode).commit();
             } catch (Exception e) {
-               e.printStackTrace();
+               log.errorf(e, "Error committing transaction for key %s", k);
             }
          }
       });
@@ -82,9 +80,7 @@ public abstract class AbstractLockOwnerCrashTest extends AbstractCrashTest {
 
       log.trace("Before completing the transaction!");
       tm(1).resume(transaction);
-      transaction.runCommitTx();
-      transaction.notifyAfterCompletion(Status.STATUS_COMMITTED);
-      tm(1).suspend();
+      transaction.runCommit(false);
 
       //make sure the 2nd transaction succeeds as well eventually
       eventually(new AbstractInfinispanTest.Condition() {
@@ -92,7 +88,7 @@ public abstract class AbstractLockOwnerCrashTest extends AbstractCrashTest {
          public boolean isSatisfied() throws Exception {
             return cache(0).get(k).equals("v2") && cache(1).get(k).equals("v2");
          }
-      }, 15000, 15);
+      }, 15000);
       assertNotLocked(k);
 
       eventually(new Condition() {

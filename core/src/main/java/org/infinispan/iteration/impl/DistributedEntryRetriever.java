@@ -16,9 +16,7 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.filter.CollectionKeyFilter;
 import org.infinispan.filter.CompositeKeyFilter;
-import org.infinispan.filter.CompositeKeyValueFilter;
 import org.infinispan.filter.KeyFilter;
-import org.infinispan.filter.KeyFilterAsKeyValueFilter;
 import org.infinispan.filter.KeyValueFilter;
 import org.infinispan.filter.KeyValueFilterAsKeyFilter;
 import org.infinispan.filter.KeyValueFilterConverter;
@@ -48,6 +46,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.function.BiConsumer;
 
 import static org.infinispan.factories.KnownComponentNames.REMOTE_COMMAND_EXECUTOR;
 
@@ -103,7 +102,7 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
       }
    }
 
-   private Map<UUID, IterationStatus<? extends Object>> iteratorDetails = CollectionFactory.makeConcurrentMap();
+   private Map<UUID, IterationStatus<?>> iteratorDetails = CollectionFactory.makeConcurrentMap();
 
    // This map keeps track of a listener when it is provided, this is useful to let caller know when a segment is
    // completed so they can do additional optimizations.  This is both used in local and remote iteration processing
@@ -186,9 +185,9 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
                log.tracef("Found leavers are %s", leavers);
             }
 
-            for (Map.Entry<UUID, IterationStatus<? extends Object>> details : iteratorDetails.entrySet()) {
+            for (Map.Entry<UUID, IterationStatus<?>> details : iteratorDetails.entrySet()) {
                UUID identifier = details.getKey();
-               final IterationStatus<? extends Object> status = details.getValue();
+               final IterationStatus<?> status = details.getValue();
                Set<Integer> remoteSegments = findMissingRemoteSegments(status.processedKeys, afterHash);
                if (!remoteSegments.isEmpty()) {
                   Map.Entry<Address, Set<Integer>> route = findOptimalRoute(remoteSegments, afterHash);
@@ -246,7 +245,7 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
 
                      @Override
                      public void handleException(CacheException e) {
-                        status.ongoingIterator.close(e);;
+                        status.ongoingIterator.close(e);
                      }
                   });
                }
@@ -276,15 +275,14 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
 
    @Override
    public <C> void startRetrievingValues(final UUID identifier, final Address origin, final Set<Integer> segments,
-                                        KeyValueFilter<? super K, ? super V> filter,
-                                        Converter<? super K, ? super V, C> converter, Set<Flag> flags) {
+                                         final Set<K> keysToFilter,
+                                         final KeyValueFilter<? super K, ? super V> filter,
+                                         final Converter<? super K, ? super V, C> converter, final Set<Flag> flags) {
       if (log.isTraceEnabled()) {
          log.tracef("Received entry request for %s from node %s for segments %s", identifier, origin, segments);
       }
 
-      wireFilterAndConverterDependencies(filter, converter);
-
-      startRetrievingValues(identifier, segments, filter, converter, flags, new SegmentBatchHandler<K, C>() {
+      startRetrievingValues(identifier, segments, keysToFilter, filter, converter, flags, new SegmentBatchHandler<K, C>() {
          @Override
          public void handleBatch(UUID identifier, boolean complete, Set<Integer> completedSegments,
                                  Set<Integer> inDoubtSegments, Collection<CacheEntry<K, C>> entries) {
@@ -316,6 +314,7 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
    }
 
    private <H, C extends H> void startRetrievingValues(final UUID identifier, final Set<Integer> segments,
+                                         final Set<K> keysToFilter,
                                          final KeyValueFilter<? super K, ? super V> filter,
                                          final Converter<? super K, ? super V, C> converter,
                                          final Set<Flag> flags, final SegmentBatchHandler<K, H> handler) {
@@ -334,6 +333,21 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
          }
       }
       if (canTryProcess) {
+         final boolean filterAndConvert;
+         final Converter<? super K, ? super V, ? extends C> usedConverter;
+         if (filter instanceof KeyValueFilterConverter && (filter == converter || converter == null)) {
+            // perform filtering and conversion in a single step
+            filterAndConvert = true;
+            usedConverter = null;
+            if (log.isTraceEnabled()) {
+               log.trace("User supplied a KeyValueFilterConverter for both filter and converter");
+            }
+         } else {
+            filterAndConvert = false;
+            usedConverter = converter;
+         }
+         wireFilterAndConverterDependencies(filter, usedConverter);
+
          executorService.execute(new Runnable() {
 
             @Override
@@ -359,8 +373,8 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
                            return super.add(kcEntry);
                         }
                      };
-                     ParallelIterableMap.KeyValueAction<? super K, CacheEntry<? super K, ? super V>> action =
-                           new MapAction(identifier, segmentsToUse, inDoubtSegmentsToUse, batchSize, converter, handler,
+                     BiConsumer<? super K, CacheEntry<? super K, ? super V>> action =
+                           new MapAction(identifier, segmentsToUse, inDoubtSegmentsToUse, batchSize, usedConverter, handler,
                                          queue);
 
                      PassivationListener<K, V> listener = null;
@@ -371,8 +385,11 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
                               InternalCacheEntry<K, V> clone = entryFactory.create(unwrapMarshalledvalue(entry.getKey()),
                                                                                    unwrapMarshalledvalue(entry.getValue()), entry);
                               K key = clone.getKey();
+                              if (keysToFilter != null && keysToFilter.contains(key)) {
+                                 continue;
+                              }
                               if (filter != null) {
-                                 if (converter == null && filter instanceof KeyValueFilterConverter) {
+                                 if (filterAndConvert) {
                                     C converted = ((KeyValueFilterConverter<K, V, C>)filter).filterAndConvert(
                                           key, clone.getValue(), clone.getMetadata());
                                     if (converted != null) {
@@ -385,28 +402,26 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
                                     continue;
                                  }
                               }
-                              action.apply(key, clone);
+                              action.accept(key, clone);
                            }
                         }
                         if (shouldUseLoader(flags) && persistenceManager.getStoresAsString().size() > 0) {
-                           KeyFilter<K> loaderFilter;
                            if (passivationEnabled) {
                               listener = new PassivationListener<K, V>();
                               cache.addListener(listener);
                            }
-                           if (filter == null || converter == null && filter instanceof KeyValueFilterConverter) {
-                              loaderFilter = new CompositeKeyFilter<K>(new SegmentFilter<K>(hashToUse, segmentsToUse),
-                                                                       // We rely on this keeping a reference and not copying
-                                                                       // contents
-                                                                       new CollectionKeyFilter<K>(processedKeys));
-                           } else {
-                              loaderFilter = new CompositeKeyFilter<K>(new SegmentFilter<K>(hashToUse, segmentsToUse),
-                                                                       new CollectionKeyFilter<K>(processedKeys),
-                                                                       new KeyValueFilterAsKeyFilter<K>(filter));
+                           List<KeyFilter<K>> stackedFilters = new ArrayList<KeyFilter<K>>(4);
+                           stackedFilters.add(new SegmentFilter<K>(hashToUse, segmentsToUse));
+                           stackedFilters.add(new CollectionKeyFilter<K>(processedKeys)); // We rely on this keeping a reference and not copying contents
+                           if (keysToFilter != null) {
+                              stackedFilters.add(new CollectionKeyFilter<K>(keysToFilter));
                            }
-                           if (converter == null && filter instanceof KeyValueFilterConverter) {
+                           if (filterAndConvert) {
                               action = new MapAction(identifier, segmentsToUse, inDoubtSegmentsToUse, batchSize, (KeyValueFilterConverter) filter, handler, queue);
+                           } else if (filter != null) {
+                              stackedFilters.add(new KeyValueFilterAsKeyFilter<K>(filter));
                            }
+                           KeyFilter<K> loaderFilter = new CompositeKeyFilter<K>(stackedFilters.toArray(new KeyFilter[stackedFilters.size()]));
                            persistenceManager.processOnAllStores(withinThreadExecutor, loaderFilter,
                                                                  new KeyValueActionForCacheLoaderTask(action), true, true);
                         }
@@ -424,7 +439,7 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
                                     // We don't want to modify the entry itself
                                     CacheEntry<K, V> clone = entry.clone();
                                     if (filter != null) {
-                                       if (converter == null && filter instanceof KeyValueFilterConverter) {
+                                       if (filterAndConvert) {
                                           C converted = ((KeyValueFilterConverter<K, V, C>)filter).filterAndConvert(
                                                 key, clone.getValue(), clone.getMetadata());
                                           if (converted != null) {
@@ -437,7 +452,7 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
                                           continue;
                                        }
                                     }
-                                    action.apply(clone.getKey(), clone);
+                                    action.accept(clone.getKey(), clone);
                                  }
                               }
                            }
@@ -470,7 +485,7 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
                   if (repeat) {
                      // Only local would ever go into here
                      hashToUse = getCurrentHash();
-                     IterationStatus<? extends Object> status = iteratorDetails.get(identifier);
+                     IterationStatus<?> status = iteratorDetails.get(identifier);
                      if (status != null) {
                         segmentsToUse = findMissingLocalSegments(status.processedKeys, hashToUse);
                         inDoubtSegmentsToUse.clear();
@@ -515,24 +530,24 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
    }
 
    private <H, C extends H> void startRetrievingValuesLocal(final UUID identifier, final Set<Integer> segments,
-                                                          IterationStatus<C> status,
+                                                          final IterationStatus<C> status,
                                                           final SegmentBatchHandler<K, H> handler) {
       boolean shouldRun = updatedLocalAndRun(identifier);
       if (shouldRun) {
          if (log.isTraceEnabled()) {
             log.tracef("Starting local request to retrieve segments %s for identifier %s", segments, identifier);
          }
-         startRetrievingValues(identifier, segments, status.filter, status.converter, status.flags, handler);
+         startRetrievingValues(identifier, segments, null, status.filter, status.converter, status.flags, handler);
       } else if (log.isTraceEnabled()) {
          log.tracef("Not running local retrieval as another thread is handling it for identifier %s.", identifier);
       }
    }
 
    @Override
-   public <C> CloseableIterator<CacheEntry<K, C>> retrieveEntries(KeyValueFilter<? super K, ? super V> filter,
-                                                    Converter<? super K, ? super V, ? extends C> converter,
-                                                    Set<Flag> flags,
-                                                    SegmentListener listener) {
+   public <C> CloseableIterator<CacheEntry<K, C>> retrieveEntries(final KeyValueFilter<? super K, ? super V> filter,
+                                                    final Converter<? super K, ? super V, ? extends C> converter,
+                                                    final Set<Flag> flags,
+                                                    final SegmentListener listener) {
       // If we are marked as local don't process distributed entries
       if (flags != null && flags.contains(Flag.CACHE_MODE_LOCAL)) {
          log.trace("Skipping distributed entry retrieval and processing local only as CACHE_MODE_LOCAL flag was set");
@@ -546,9 +561,18 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
          return super.retrieveEntries(filter, converter, flags, listener);
       }
 
+      final Converter<? super K, ? super V, ? extends C> usedConverter;
+      if (filter instanceof KeyValueFilterConverter && (filter == converter || converter == null)) {
+         // perform filtering and conversion in a single step
+         usedConverter = null;
+         if (log.isTraceEnabled()) {
+            log.trace("User supplied a KeyValueFilterConverter for both filter and converter");
+         }
+      } else {
+         usedConverter = converter;
+      }
+
       UUID identifier = UUID.randomUUID();
-      final Converter<? super K, ? super V, ? extends C> usedConverter = checkForKeyValueFilterConverter(filter,
-                                                                                                         converter);
       if (log.isTraceEnabled()) {
          log.tracef("Processing entry retrieval request with identifier %s with filter %s and converter %s", identifier,
                     filter, usedConverter);
@@ -574,7 +598,6 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
          eventuallySendRequest(identifier, status);
       }
       if (!ourSegments.isEmpty()) {
-         wireFilterAndConverterDependencies(filter, usedConverter);
          startRetrievingValuesLocal(identifier, ourSegments, status, new SegmentBatchHandler<K, C>() {
             @Override
             public void handleBatch(UUID identifier, boolean complete, Set<Integer> completedSegments, Set<Integer> inDoubtSegments, Collection<CacheEntry<K, C>> entries) {
@@ -599,7 +622,7 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
       return hash;
    }
 
-   private <C> boolean eventuallySendRequest(UUID identifier, IterationStatus<? extends Object> status) {
+   private <C> boolean eventuallySendRequest(UUID identifier, IterationStatus<?> status) {
       boolean sent = false;
       while (!sent) {
          // This means our iterator was closed explicitly
@@ -632,8 +655,8 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
       return sent;
    }
 
-   private <C> boolean sendRequest(boolean sync, Map.Entry<Address, Set<Integer>> route, final UUID identifier,
-                                   IterationStatus<? extends Object> status) {
+   private <C> boolean sendRequest(boolean sync, Map.Entry<Address, Set<Integer>> route, UUID identifier,
+                                   IterationStatus<?> status) {
       if (log.isTraceEnabled()) {
          log.tracef("Sending request to %s for identifier %s", route, identifier);
       }
@@ -649,36 +672,19 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
             keysToFilter.addAll(valuesSeen);
          }
       }
-      KeyValueFilter<? super K, ? super V> filterToSend;
-      if (status.filter == null) {
-         if (!keysToFilter.isEmpty()) {
-            if (log.isTraceEnabled()) {
-               log.tracef("Applying filter for %s of keys", keysToFilter.size());
-            }
-            filterToSend = new KeyFilterAsKeyValueFilter<K, V>(new CollectionKeyFilter<K>(keysToFilter));
+      if (log.isTraceEnabled()) {
+         if (keysToFilter.isEmpty()) {
+            log.tracef("Using provided filter %s", status.filter);
          } else {
-            if (log.isTraceEnabled()) {
-               log.trace("No filter applied");
-            }
-            filterToSend = null;
-         }
-      } else {
-         if (!keysToFilter.isEmpty()) {
-            if (log.isTraceEnabled()) {
-               log.tracef("Applying filter for %s of keys with provided filter %s" , keysToFilter.size(), status.filter);
-            }
-            filterToSend = new CompositeKeyValueFilter<K, V>(
-                  new KeyFilterAsKeyValueFilter<K, V>(new CollectionKeyFilter<K>(keysToFilter)), status.filter);
-         } else {
-            if (log.isTraceEnabled()) {
-               log.tracef("Using provided filter %s", status.filter);
-            }
-            filterToSend = status.filter;
+            log.tracef("Applying filter for %s of keys with provided filter %s", keysToFilter.size(), status.filter);
          }
       }
+      if (keysToFilter.isEmpty()) {
+         keysToFilter = null;
+      }
 
-      EntryRequestCommand<K, V, ? extends Object> command = commandsFactory.buildEntryRequestCommand(identifier, segments,
-                                                                                      filterToSend, status.converter,
+      EntryRequestCommand<K, V, ?> command = commandsFactory.buildEntryRequestCommand(identifier, segments, keysToFilter,
+                                                                                      status.filter, status.converter,
                                                                                       status.flags);
       try {
          // We don't want async with sync marshalling as we don't want the extra overhead time
@@ -730,20 +736,21 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
             // Just ignore a null status
             if (status == null) {
                updated = true;
-            }
-            switch (status) {
-               case IDLE:
-                  // If idle we try to update to running which means we should fire it off
-                  updated = shouldRun = localRunning.compareAndSet(LocalStatus.IDLE, LocalStatus.RUNNING);
-                  break;
-               case REPEAT:
-                  // If is repeat then we don't worry since it will have to be repeated still
-                  updated = true;
-                  break;
-               case RUNNING:
-                  // If it is running try to set to repeat to make sure they know about the new segments
-                  updated = localRunning.compareAndSet(LocalStatus.RUNNING, LocalStatus.REPEAT);
-                  break;
+            } else {
+               switch (status) {
+                  case IDLE:
+                     // If idle we try to update to running which means we should fire it off
+                     updated = shouldRun = localRunning.compareAndSet(LocalStatus.IDLE, LocalStatus.RUNNING);
+                     break;
+                  case REPEAT:
+                     // If is repeat then we don't worry since it will have to be repeated still
+                     updated = true;
+                     break;
+                  case RUNNING:
+                     // If it is running try to set to repeat to make sure they know about the new segments
+                     updated = localRunning.compareAndSet(LocalStatus.RUNNING, LocalStatus.REPEAT);
+                     break;
+               }
             }
          }
       }
@@ -1132,7 +1139,7 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
       }
    }
 
-   private class MapAction<K, V, C> implements ParallelIterableMap.KeyValueAction<K, CacheEntry<K, V>> {
+   private class MapAction<K, V, C> implements BiConsumer<K, CacheEntry<K, V>> {
       final UUID identifier;
       final Set<Integer> segments;
       final int batchSize;
@@ -1154,13 +1161,13 @@ public class DistributedEntryRetriever<K, V> extends LocalEntryRetriever<K, V> {
       }
 
       @Override
-      public void apply(K k, CacheEntry<K, V> kvInternalCacheEntry) {
+      public void accept(K k, CacheEntry<K, V> kvInternalCacheEntry) {
          ConsistentHash hash = getCurrentHash();
          if (segments.contains(hash.getSegment(k))) {
             CacheEntry<K, C> clone = (CacheEntry<K, C>)kvInternalCacheEntry.clone();
             if (converter != null) {
                C value = converter.convert(k, kvInternalCacheEntry.getValue(), kvInternalCacheEntry.getMetadata());
-               if (value == null && converter instanceof KeyValueFilterConverter) {
+               if (value == null && converter instanceof KeyValueFilterConverter) {  // the converter also acts as a filter here
                   return;
                }
                clone.setValue(value);

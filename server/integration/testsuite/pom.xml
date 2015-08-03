@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.infinispan.server</groupId>
         <artifactId>infinispan-server-versions</artifactId>
-        <version>7.1.1-SNAPSHOT</version>
+        <version>8.0.0-SNAPSHOT</version>
         <relativePath>../versions/pom.xml</relativePath>
     </parent>
 
@@ -23,7 +23,7 @@
             <artifactId>arquillian-junit-container</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.wildfly</groupId>
+            <groupId>org.wildfly.arquillian</groupId>
             <artifactId>wildfly-arquillian-container-managed</artifactId>
             <exclusions>
                 <exclusion>
@@ -140,12 +140,12 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.wildfly</groupId>
+            <groupId>org.wildfly.core</groupId>
             <artifactId>wildfly-controller</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.wildfly</groupId>
+            <groupId>org.wildfly.core</groupId>
             <artifactId>wildfly-controller-client</artifactId>
             <scope>test</scope>
         </dependency>
@@ -251,7 +251,7 @@
         <server.jvm>${env.JAVA_HOME}</server.jvm>
         <resources.dir>${basedir}/src/test/resources</resources.dir>
 
-        <jvm.memory.args>-Xmx512m -XX:MaxPermSize=128m</jvm.memory.args>
+        <jvm.memory.args>-Xmx512m</jvm.memory.args>
         <jvm.x64.args />
         <default.transport.stack>udp</default.transport.stack>
         <transport.stack>-Djboss.default.jgroups.stack=${default.transport.stack}</transport.stack>
@@ -304,18 +304,20 @@
                 <directory>${project.basedir}/src/test/resources</directory>
                 <filtering>true</filtering>
                 <excludes>
-                    <exclude>*.jks</exclude>
-                    <exclude>*.keystore</exclude>
-                    <exclude>*.keytab</exclude>
+                    <exclude>**/*.jks</exclude>
+                    <exclude>**/*.keystore</exclude>
+                    <exclude>**/*.keytab</exclude>
+                    <exclude>**/*.dat</exclude>
                 </excludes>
             </testResource>
             <testResource>
                 <directory>${project.basedir}/src/test/resources</directory>
                 <filtering>false</filtering>
                 <includes>
-                    <include>*.jks</include>
-                    <include>*.keystore</include>
-                    <include>*.keytab</include>
+                    <include>**/*.jks</include>
+                    <include>**/*.keystore</include>
+                    <include>**/*.keytab</include>
+                    <include>**/*.dat</include>
                 </includes>
             </testResource>
         </testResources>
@@ -352,6 +354,7 @@
                         <id>copy-test-libs</id>
                         <phase>process-test-resources</phase>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <outputDirectory>${project.build.directory}/test-libs</outputDirectory>
                             <stripVersion>true</stripVersion>
                             <artifactItems>
@@ -379,6 +382,7 @@
                         </goals>
                         <phase>generate-resources</phase>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <target>
                                 <ant antfile="build-testsuite.xml" inheritRefs="true" target="create-all-distros">
                                     
@@ -417,6 +421,7 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <target description="Verify if H2 TCP server will be running" name="setup-h2">
                                 <condition property="run.h2.server">
                                     <equals arg1="${database}" arg2="h2" />
@@ -436,6 +441,7 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <target description="Starts Java H2 processes" if="run.h2.server" name="start-h2">
                                 <echo>Starting H2 TCP server!</echo>
                                 <echo>H2 jar: ${driver.dir}/${driver.jar}</echo>
@@ -455,6 +461,7 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <target description="Stops Java H2 processes" if="run.h2.server" name="stop-h2">
                                 <echo>Stopping H2 TCP server!</echo>
                                 <echo>H2 jar: ${driver.dir}/${driver.jar}</echo>
@@ -478,6 +485,7 @@
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <configuration>
                     <forkMode>once</forkMode>
+                    <failIfNoTests>false</failIfNoTests>
                     <excludedGroups>${groups.unstable}</excludedGroups>
                     <systemPropertyVariables>
                         <server1.dist>${server1.dist}</server1.dist>
@@ -515,10 +523,11 @@
                         <username.other>${username.other}</username.other>
                         <password.other>${password.other}</password.other>
 
-                        
                         <node0.ip>${node0.ip}</node0.ip>
                         <node1.ip>${node1.ip}</node1.ip>
                         <node2.ip>${node2.ip}</node2.ip>
+                        
+                        <server.jmx.domain>jboss.datagrid-infinispan</server.jmx.domain>
                     </systemPropertyVariables>
                     
                     <additionalClasspathElements>
@@ -891,14 +900,15 @@
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/start-jbossas.xml" target="start-jbossas">
-                                            <property name="server-dist" value="${server.old.dist}" />
-                                            <property name="port-offset" value="100" />
-                                            <property name="management-port" value="10090" />
-                                            <property name="hotrod-port" value="11322" />
+                                        <ant antfile="${basedir}/src/test/resources/ant/infinispan-server.xml" target="start-server">
+                                            <property name="server.dist" value="${server.old.dist}" />
+                                            <property name="port.offset" value="100" />
+                                            <property name="management.port" value="10090" />
+                                            <property name="hotrod.port" value="11322" />
                                             <property name="jboss.node.name" value="node1" />
-                                            <property name="configuration-file" value="standalone.xml" />
+                                            <property name="jboss.config.file" value="standalone.xml" />
                                         </ant>
                                     </target>
                                 </configuration>
@@ -910,9 +920,10 @@
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/kill-jbossas.xml" target="kill-jbossas">
-                                            <property name="hotrod-port" value="11322" />
+                                        <ant antfile="${basedir}/src/test/resources/ant/infinispan-server.xml" target="kill-server">
+                                            <property name="hotrod.port" value="11322" />
                                         </ant>
                                     </target>
                                 </configuration>
@@ -946,14 +957,15 @@
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/start-jbossas.xml" target="start-jbossas">
-                                            <property name="server-dist" value="${server2.old.dist}" />
-                                            <property name="port-offset" value="200" />
-                                            <property name="management-port" value="10190" />
-                                            <property name="hotrod-port" value="11422" />
+                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="start-server">
+                                            <property name="server.dist" value="${server2.old.dist}" />
+                                            <property name="port.offset" value="200" />
+                                            <property name="management.port" value="10190" />
+                                            <property name="hotrod.port" value="11422" />
                                             <property name="jboss.node.name" value="node2" />
-                                            <property name="configuration-file" value="clustered.xml" />
+                                            <property name="jboss.config.file" value="clustered.xml" />
                                         </ant>
                                     </target>
                                 </configuration>
@@ -965,14 +977,15 @@
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/start-jbossas.xml" target="start-jbossas">
-                                            <property name="server-dist" value="${server3.old.dist}" />
-                                            <property name="port-offset" value="300" />
-                                            <property name="management-port" value="10290" />
-                                            <property name="hotrod-port" value="11522" />
+                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="start-server">
+                                            <property name="server.dist" value="${server3.old.dist}" />
+                                            <property name="port.offset" value="300" />
+                                            <property name="management.port" value="10290" />
+                                            <property name="hotrod.port" value="11522" />
                                             <property name="jboss.node.name" value="node3" />
-                                            <property name="configuration-file" value="clustered.xml" />
+                                            <property name="jboss.config.file" value="clustered.xml" />
                                         </ant>
                                     </target>
                                 </configuration>
@@ -984,9 +997,10 @@
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/kill-jbossas.xml" target="kill-jbossas">
-                                            <property name="hotrod-port" value="11422" />
+                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="kill-server">
+                                            <property name="hotrod.port" value="11422" />
                                         </ant>
                                     </target>
                                 </configuration>
@@ -998,9 +1012,10 @@
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/kill-jbossas.xml" target="kill-jbossas">
-                                            <property name="hotrod-port" value="11522" />
+                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="kill-server">
+                                            <property name="hotrod.port" value="11522" />
                                         </ant>
                                     </target>
                                 </configuration>
@@ -1082,14 +1097,15 @@
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/start-jbossas.xml" target="start-jbossas">
-                                            <property name="server-dist" value="${server1.dist}" />
-                                            <property name="port-offset" value="0" />
-                                            <property name="management-port" value="9990" />
-                                            <property name="hotrod-port" value="11222" />
-                                            <property name="jboss.node.name" value="jdg" />
-                                            <property name="configuration-file" value="testsuite/clustered-indexing.xml" />
+                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="start-server">
+                                            <property name="server.dist" value="${server1.dist}" />
+                                            <property name="port.offset" value="0" />
+                                            <property name="management.port" value="9990" />
+                                            <property name="hotrod.port" value="11222" />
+                                            <property name="jboss.node.name" value="ispn-server" />
+                                            <property name="jboss.config.file" value="testsuite/clustered-indexing.xml" />
                                         </ant>
                                     </target>
                                 </configuration>
@@ -1101,9 +1117,10 @@
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${skipTests}</skip>
                                     <target>
-                                        <ant antfile="${basedir}/src/test/resources/ant/kill-jbossas.xml" target="kill-jbossas">
-                                            <property name="hotrod-port" value="11222" />
+                                        <ant antfile="../src/main/ant/infinispan-server.xml" target="kill-server">
+                                            <property name="hotrod.port" value="11222" />
                                         </ant>
                                     </target>
                                 </configuration>
@@ -1146,18 +1163,6 @@
                 <groups.client.local>org.infinispan.server.test.category.UnstableClientLocal</groups.client.local>
                 <groups.client.clustered>org.infinispan.server.test.category.UnstableClientClustered</groups.client.clustered>
             </properties>
-            
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-failsafe-plugin</artifactId>
-                        <configuration>
-                            <failIfNoTests>false</failIfNoTests>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
         </profile>
     </profiles>
 </project>

@@ -50,7 +50,7 @@ public class LockControlCommand extends AbstractTransactionBoundaryCommand imple
       super(cacheName);
    }
 
-   public LockControlCommand(Collection<Object> keys, String cacheName, Set<Flag> flags, GlobalTransaction gtx) {
+   public LockControlCommand(Collection<?> keys, String cacheName, Set<Flag> flags, GlobalTransaction gtx) {
       super(cacheName);
       if (keys != null) {
          //building defensive copies is here in order to support replaceKey operation
@@ -195,6 +195,7 @@ public class LockControlCommand extends AbstractTransactionBoundaryCommand imple
          .append(", keys=").append(keys)
          .append(", flags=").append(flags)
          .append(", unlock=").append(unlock)
+         .append(", gtx=").append(globalTx)
          .append("}")
          .toString();
    }

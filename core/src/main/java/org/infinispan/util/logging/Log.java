@@ -19,6 +19,8 @@ import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
 import org.infinispan.topology.CacheTopology;
+import org.infinispan.transaction.LockingMode;
+import org.infinispan.transaction.TransactionMode;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.transaction.xa.recovery.RecoveryAwareRemoteTransaction;
@@ -38,6 +40,7 @@ import javax.naming.NamingException;
 import javax.transaction.Synchronization;
 import javax.transaction.TransactionManager;
 import javax.transaction.xa.XAException;
+import javax.transaction.xa.XAResource;
 import javax.xml.namespace.QName;
 
 import java.io.File;
@@ -50,7 +53,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
 
 import static org.jboss.logging.Logger.Level.*;
 
@@ -258,10 +260,6 @@ public interface Log extends BasicLogger {
    void unableToProcessAsyncModifications(int retries);
 
    @LogMessage(level = ERROR)
-   @Message(value = "AsyncStoreCoordinator interrupted", id = 54)
-   void asyncStoreCoordinatorInterrupted(@Cause InterruptedException e);
-
-   @LogMessage(level = ERROR)
    @Message(value = "Unexpected error in AsyncStoreCoordinator thread. AsyncCacheWriter is dead!", id = 55)
    void unexpectedErrorInAsyncStoreCoordinator(@Cause Throwable t);
 
@@ -349,17 +347,14 @@ public interface Log extends BasicLogger {
    @Message(value = "Errors instantiating [%s]! Not using a channel lookup.", id = 84)
    void errorInstantiatingJGroupsChannelLookup(String channelLookupClassName, @Cause Exception e);
 
-   @LogMessage(level = ERROR)
-   @Message(value = "Error while trying to create a channel using config files: %s", id = 85)
-   void errorCreatingChannelFromConfigFile(String cfg);
+   @Message(value = "Error while trying to create a channel using the specified configuration file: %s", id = 85)
+   CacheConfigurationException errorCreatingChannelFromConfigFile(String cfg, @Cause Exception e);
 
-   @LogMessage(level = ERROR)
-   @Message(value = "Error while trying to create a channel using config XML: %s", id = 86)
-   void errorCreatingChannelFromXML(String cfg);
+   @Message(value = "Error while trying to create a channel using the specified configuration XML: %s", id = 86)
+   CacheConfigurationException errorCreatingChannelFromXML(String cfg, @Cause Exception e);
 
-   @LogMessage(level = ERROR)
-   @Message(value = "Error while trying to create a channel using config string: %s", id = 87)
-   void errorCreatingChannelFromConfigString(String cfg);
+   @Message(value = "Error while trying to create a channel using the specified configuration string: %s", id = 87)
+   CacheConfigurationException errorCreatingChannelFromConfigString(String cfg, @Cause Exception e);
 
    @LogMessage(level = INFO)
    @Message(value = "Unable to use any JGroups configuration mechanisms provided in properties %s. " +
@@ -569,12 +564,6 @@ public interface Log extends BasicLogger {
    @LogMessage(level = WARN)
    @Message(value = "Could not rollback prepared 1PC transaction. This transaction will be rolled back by the recovery process, if enabled. Transaction: %s", id = 141)
    void couldNotRollbackPrepared1PcTransaction(LocalTransaction localTransaction, @Cause Throwable e1);
-
-   @LogMessage(level = WARN)
-   @Message(value = "The async store shutdown timeout (%d ms) is too high compared " +
-         "to cache stop timeout (%d ms), so instead using %d ms for async store stop wait", id = 142)
-   void asyncStoreShutdownTimeoutTooHigh(long configuredAsyncStopTimeout,
-      long cacheStopTimeout, long asyncStopTimeout);
 
    @LogMessage(level = WARN)
    @Message(value = "Received a key that doesn't map to this node: %s, mapped to %s", id = 143)
@@ -813,7 +802,7 @@ public interface Log extends BasicLogger {
    void entriesMigrated(long count, String name, String prettyTime);
 
    @Message(value = "Received exception from %s, see cause for remote stack trace", id = 217)
-   RemoteException remoteException(Address sender, @Cause Exception e);
+   RemoteException remoteException(Address sender, @Cause Throwable t);
 
    @LogMessage(level = INFO)
    @Message(value = "Timeout while waiting for the transaction validation. The command will not be processed. " +
@@ -868,9 +857,6 @@ public interface Log extends BasicLogger {
 
    @Message(value="Cache is in an invalid state: %s", id = 232)
    IllegalStateException invalidCacheState(String cacheState);
-
-   @Message(value="Waiting on work threads latch failed: %s", id = 233)
-   TimeoutException waitingForWorkerThreadsFailed(CountDownLatch latch);
 
    @Message(value = "Root element for %s already registered in ParserRegistry", id = 234)
    IllegalArgumentException parserRootElementAlreadyRegistered(QName qName);
@@ -1115,10 +1101,6 @@ public interface Log extends BasicLogger {
    void unsuccessfulResponseRetrievingTransactionsForSegments(Address address, Response response);
 
    @LogMessage(level = WARN)
-   @Message(value = "Partition handling doesn't work for replicated caches, it will be ignored.", id = 303)
-   void warnPartitionHandlingForReplicatedCaches();
-
-   @LogMessage(level = WARN)
    @Message(value = "More than one configuration file with specified name on classpath. The first one will be used:\n %s", id = 304)
    void ambiguousConfigurationFiles(String files);
 
@@ -1209,7 +1191,7 @@ public interface Log extends BasicLogger {
    @Message(value = "Cannot find a parser for element '%s' in namespace '%s'. Check that your configuration is up-to date for this version of Infinispan.", id = 327)
    CacheConfigurationException unsupportedConfiguration(String element, String namespaceUri);
 
-   @LogMessage(level = INFO)
+   @LogMessage(level = DEBUG)
    @Message(value = "Finished local rebalance for cache %s on node %s, topology id = %d", id = 328)
    void rebalanceCompleted(String cacheName, Address node, int topologyId);
 
@@ -1220,9 +1202,139 @@ public interface Log extends BasicLogger {
    @LogMessage(level = WARN)
    @Message(value = "Distributed task failed at %s. The task is failing over to be executed at %s", id = 330)
    void distributedTaskFailover(Address failedAtAddress, Address failoverTarget, @Cause Exception e);
-   
+
    @LogMessage(level = WARN)
    @Message(value = "Unable to invoke method %s on Object instance %s ", id = 331)
    void unableToInvokeListenerMethod(Method m, Object target, @Cause Throwable e);
 
+   @Message(value = "Remote transaction %s rolled back because originator is no longer in the cluster", id = 332)
+   CacheException orphanTransactionRolledBack(GlobalTransaction gtx);
+
+   @Message(value = "The site must be specified.", id = 333)
+   CacheConfigurationException backupSiteNullName();
+
+   @Message(value = "Using a custom failure policy requires a failure policy class to be specified.", id = 334)
+   CacheConfigurationException customBackupFailurePolicyClassNotSpecified();
+
+   @Message(value = "Two-phase commit can only be used with synchronous backup strategy.", id = 335)
+   CacheConfigurationException twoPhaseCommitAsyncBackup();
+
+   @LogMessage(level = INFO)
+   @Message(value = "Finished cluster-wide rebalance for cache %s, topology id = %d", id = 336)
+   void clusterWideRebalanceCompleted(String cacheName, int topologyId);
+
+   @Message(value = "The 'site' must be specified!", id = 337)
+   CacheConfigurationException backupMissingSite();
+
+   @Message(value = "It is required to specify a 'failurePolicyClass' when using a custom backup failure policy!", id = 338)
+   CacheConfigurationException missingBackupFailurePolicyClass();
+
+   @Message(value = "Null name not allowed (use 'defaultRemoteCache()' in case you want to specify the default cache name).", id = 339)
+   CacheConfigurationException backupForNullCache();
+
+   @Message(value = "Both 'remoteCache' and 'remoteSite' must be specified for a backup'!", id = 340)
+   CacheConfigurationException backupForMissingParameters();
+
+   @Message(value = "Cannot configure async properties for an sync cache. Set the cache mode to async first.", id = 341)
+   IllegalStateException asyncPropertiesConfigOnSyncCache();
+
+   @Message(value = "Cannot configure sync properties for an async cache. Set the cache mode to sync first.", id = 342)
+   IllegalStateException syncPropertiesConfigOnAsyncCache();
+
+   @Message(value = "Must have a transport set in the global configuration in " +
+               "order to define a clustered cache", id = 343)
+   CacheConfigurationException missingTransportConfiguration();
+
+   @Message(value = "reaperWakeUpInterval must be >= 0, we got %d", id = 344)
+   CacheConfigurationException invalidReaperWakeUpInterval(long timeout);
+
+   @Message(value = "completedTxTimeout must be >= 0, we got %d", id = 345)
+   CacheConfigurationException invalidCompletedTxTimeout(long timeout);
+
+   @Message(value = "Total Order based protocol not available for transaction mode %s", id = 346)
+   CacheConfigurationException invalidTxModeForTotalOrder(TransactionMode transactionMode);
+
+   @Message(value = "Cache mode %s is not supported by Total Order based protocol", id = 347)
+   CacheConfigurationException invalidCacheModeForTotalOrder(String friendlyCacheModeString);
+
+   @Message(value = "Total Order based protocol not available with recovery", id = 348)
+   CacheConfigurationException unavailableTotalOrderWithTxRecovery();
+
+   @Message(value = "Total Order based protocol not available with %s", id = 349)
+   CacheConfigurationException invalidLockingModeForTotalOrder(LockingMode lockingMode);
+
+   @Message(value = "Enabling the L1 cache is only supported when using DISTRIBUTED as a cache mode.  Your cache mode is set to %s", id = 350)
+   CacheConfigurationException l1OnlyForDistributedCache(String cacheMode);
+
+   @Message(value = "Using a L1 lifespan of 0 or a negative value is meaningless", id = 351)
+   CacheConfigurationException l1InvalidLifespan();
+
+   @Message(value = "Use of the replication queue is invalid when using DISTRIBUTED mode.", id = 352)
+   CacheConfigurationException noReplicationQueueDistributedCache();
+
+   @Message(value = "Use of the replication queue is only allowed with an ASYNCHRONOUS cluster mode.", id = 353)
+   CacheConfigurationException replicationQueueOnlyForAsyncCaches();
+
+   @Message(value = "Cannot define both interceptor class (%s) and interceptor instance (%s)", id = 354)
+   CacheConfigurationException interceptorClassAndInstanceDefined(String customInterceptorClassName, String customInterceptor);
+
+   @Message(value = "Unable to instantiate loader/writer instance for StoreConfiguration %s", id = 355)
+   CacheConfigurationException unableToInstantiateClass(Class<?> storeConfigurationClass);
+
+   @Message(value = "Maximum data container size is currently 2^48 - 1, the number provided was %s", id = 356)
+   CacheConfigurationException evictionSizeTooLarge(long value);
+
+   @LogMessage(level = ERROR)
+   @Message(value = "end() failed for %s", id = 357)
+   void xaResourceEndFailed(XAResource resource, @Cause Throwable t);
+
+   @Message(value = "A cache configuration named %s already exists. This cannot be configured externally by the user.", id = 358)
+   CacheConfigurationException existingConfigForInternalCache(String name);
+
+   @Message(value = "Keys '%s' are not available. Not all owners are in this partition", id = 359)
+   AvailabilityException degradedModeKeysUnavailable(Collection<?> keys);
+
+   @LogMessage(level = WARN)
+   @Message(value = "The xml element eviction-executor has been deprecated and replaced by expiration-executor, please update your configuration file.", id = 360)
+   void evictionExecutorDeprecated();
+
+   @Message(value = "Cannot commit remote transaction %s as it was already rolled back", id = 361)
+   CacheException remoteTransactionAlreadyRolledBack(GlobalTransaction gtx);
+
+   @Message(value = "Could not find status for remote transaction %s, please increase transaction.completedTxTimeout", id = 362)
+   TimeoutException remoteTransactionStatusMissing(GlobalTransaction gtx);
+
+   @LogMessage(level = WARN)
+   @Message(value = "No indexing service provider found for indexed filter of type %s", id = 363)
+   void noFilterIndexingServiceProviderFound(String filterClassName);
+
+   @Message(value = "Attempted to register cluster listener of class %s, but listener is annotated as only observing pre events!", id = 364)
+   CacheException clusterListenerRegisteredWithOnlyPreEvents(Class<?> listenerClass);
+
+   @Message(value = "Could not find the specified JGroups configuration file '%s'", id = 365)
+   CacheConfigurationException jgroupsConfigurationNotFound(String cfg);
+
+   @Message(value = "Unable to add a 'null' Custom Cache Store", id = 366)
+   IllegalArgumentException unableToAddNullCustomStore();
+
+   @LogMessage(level = ERROR)
+   @Message(value = "There was an issue with topology update for topology: %s", id = 367)
+   void topologyUpdateError(int topologyId, @Cause Throwable t);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Memory approximation calculation for eviction is unsupported for the '%s' Java VM", id = 368)
+   void memoryApproximationUnsupportedVM(String javaVM);
+
+   @LogMessage(level = WARN)
+   @Message(value = "Ignoring asyncMarshalling configuration", id = 369)
+   void ignoreAsyncMarshalling();
+
+   @Message(value = "Cache name '%s' cannot be used as it is a reserved, internal name", id = 370)
+   IllegalArgumentException illegalCacheName(String name);
+
+   @Message(value = "Cannot remove cache configuration '%s' because it is in use", id = 371)
+   IllegalStateException configurationInUse(String configurationName);
+
+   @Message(value = "Statistics are enabled while attribute 'available' is set to false.", id = 372)
+   CacheConfigurationException statisticsEnabledNotAvailable();
 }

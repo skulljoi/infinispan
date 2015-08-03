@@ -22,6 +22,7 @@ import org.testng.annotations.Test;
 
 import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheConfiguration;
 import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 
 /**
@@ -30,7 +31,7 @@ import static org.testng.AssertJUnit.assertTrue;
  * @author Tristan Tarrant
  * @since 5.2
  */
-@Test(testName = "cli-server.HotRodEncodingTest", groups = "functional")
+@Test(testName = "cli.interpreter.HotRodEncodingTest", groups = "functional")
 @CleanupAfterMethod
 public class HotRodEncodingTest extends SingleCacheManagerTest {
 
@@ -62,13 +63,9 @@ public class HotRodEncodingTest extends SingleCacheManagerTest {
 
    @AfterTest
    public void release() {
-      try {
-         HotRodClientTestingUtil.killRemoteCacheManager(remoteCacheManager);
-         HotRodClientTestingUtil.killServers(hotrodServer);
-         TestingUtil.killCacheManagers(cacheManager);
-      } catch (Exception e) {
-         e.printStackTrace();
-      }
+      HotRodClientTestingUtil.killRemoteCacheManager(remoteCacheManager);
+      HotRodClientTestingUtil.killServers(hotrodServer);
+      TestingUtil.killCacheManagers(cacheManager);
    }
 
    public void testHotRodCodec() throws Exception {
@@ -83,9 +80,17 @@ public class HotRodEncodingTest extends SingleCacheManagerTest {
       Map<String, String> response = interpreter.execute(sessionId, "get --codec=hotrod k1;");
       assertEquals("v1", response.get(ResultKeys.OUTPUT.toString()));
 
-      interpreter.execute(sessionId, "put --codec=hotrod k2 v2;");
+      assertInterpreter(interpreter.execute(sessionId, "remove --codec=hotrod k1;"));
+      String v1 = remoteCache.get("k1");
+      assertNull(v1);
+
+      assertInterpreter(interpreter.execute(sessionId, "put --codec=hotrod k2 v2;"));
       String v2 = remoteCache.get("k2");
       assertEquals("v2", v2);
+
+      assertInterpreter(interpreter.execute(sessionId, "evict --codec=hotrod k2;"));
+      v2 = remoteCache.get("k2");
+      assertNull(v2);
    }
 
    public void testHotRodEncoding() throws Exception {
@@ -101,8 +106,12 @@ public class HotRodEncodingTest extends SingleCacheManagerTest {
       Map<String, String> response = interpreter.execute(sessionId, "get k1;");
       assertEquals("v1", response.get(ResultKeys.OUTPUT.toString()));
 
-      interpreter.execute(sessionId, "put k2 v2;");
+      assertInterpreter(interpreter.execute(sessionId, "put k2 v2;"));
       String v2 = remoteCache.get("k2");
       assertEquals("v2", v2);
+   }
+
+   private void assertInterpreter(Map<String, String> response) {
+      assertNull(response.get(ResultKeys.ERROR.toString()));
    }
 }

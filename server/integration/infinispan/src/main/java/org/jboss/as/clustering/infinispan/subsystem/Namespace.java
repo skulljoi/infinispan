@@ -24,6 +24,7 @@ package org.jboss.as.clustering.infinispan.subsystem;
 
 import java.util.List;
 
+import org.jboss.as.controller.ModelVersion;
 import org.jboss.dmr.ModelNode;
 import org.jboss.staxmapper.XMLElementReader;
 
@@ -35,34 +36,33 @@ public enum Namespace {
     // must be first
     UNKNOWN("jboss:domain:infinispan", 0, 0, null),
 
-    INFINISPAN_1_0("jboss:domain:infinispan", 1, 0, new InfinispanSubsystemXMLReader_1_0()),
-    INFINISPAN_1_1("jboss:domain:infinispan", 1, 1, new InfinispanSubsystemXMLReader_1_1()),
-    INFINISPAN_1_2("jboss:domain:infinispan", 1, 2, new InfinispanSubsystemXMLReader_1_2()), // IMPORTANT: Management API version != XSD version!
-    INFINISPAN_1_3("jboss:domain:infinispan", 1, 3, new InfinispanSubsystemXMLReader_1_3()), // IMPORTANT: Management API version != XSD version!
-    INFINISPAN_1_4("jboss:domain:infinispan", 1, 4, new InfinispanSubsystemXMLReader_1_4()), // IMPORTANT: Management API version != XSD version!
-    INFINISPAN_SERVER_5_2("infinispan:server:core", 5, 2, new InfinispanSubsystemXMLReader_5_2()),
-    INFINISPAN_SERVER_5_3("infinispan:server:core", 5, 3, new InfinispanSubsystemXMLReader_5_3()),
-    INFINISPAN_SERVER_6_0("infinispan:server:core", 6, 0, new InfinispanSubsystemXMLReader_6_0()),
-    INFINISPAN_SERVER_7_0("infinispan:server:core", 7, 0, new InfinispanSubsystemXMLReader_7_0()),
-    INFINISPAN_SERVER_7_1("infinispan:server:core", 7, 1, new InfinispanSubsystemXMLReader_7_1()),
+    INFINISPAN_SERVER_5_2("infinispan:server:core", 5, 2, InfinispanSubsystemXMLReader_5_3.INSTANCE),
+    INFINISPAN_SERVER_5_3("infinispan:server:core", 5, 3, InfinispanSubsystemXMLReader_5_3.INSTANCE),
+    INFINISPAN_SERVER_6_0("infinispan:server:core", 6, 0, InfinispanSubsystemXMLReader_6_0.INSTANCE),
+    INFINISPAN_SERVER_7_0("infinispan:server:core", 7, 0, InfinispanSubsystemXMLReader_7_2.INSTANCE),
+    INFINISPAN_SERVER_7_1("infinispan:server:core", 7, 1, InfinispanSubsystemXMLReader_7_2.INSTANCE),
+    INFINISPAN_SERVER_7_2("infinispan:server:core", 7, 2, InfinispanSubsystemXMLReader_7_2.INSTANCE),
+    INFINISPAN_SERVER_8_0("infinispan:server:core", 8, 0, InfinispanSubsystemXMLReader_8_0.INSTANCE),
     ;
     private static final String URN_PATTERN = "urn:%s:%d.%d";
 
     /**
      * The current namespace version.
      */
-    public static final Namespace CURRENT = INFINISPAN_SERVER_7_1;
+    public static final Namespace CURRENT = INFINISPAN_SERVER_8_0;
 
     private final int major;
     private final int minor;
     private final XMLElementReader<List<ModelNode>> reader;
     private final String domain;
+    private final ModelVersion version;
 
     Namespace(String domain, int major, int minor, XMLElementReader<List<ModelNode>> reader) {
         this.domain = domain;
         this.major = major;
         this.minor = minor;
         this.reader = reader;
+        this.version = ModelVersion.create(major, minor);
     }
 
     /**
@@ -76,5 +76,13 @@ public enum Namespace {
 
     public XMLElementReader<List<ModelNode>> getXMLReader() {
         return this.reader;
+    }
+
+    public ModelVersion getVersion() {
+        return this.version;
+    }
+
+    public String format(String format) {
+        return String.format(format, major, minor);
     }
 }

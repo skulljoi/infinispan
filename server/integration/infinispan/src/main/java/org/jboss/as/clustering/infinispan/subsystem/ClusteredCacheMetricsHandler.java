@@ -8,6 +8,7 @@ import java.util.Map;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
+import org.infinispan.server.infinispan.spi.service.CacheServiceName;
 import org.infinispan.stats.ClusterCacheStats;
 import org.jboss.as.controller.AbstractRuntimeOnlyHandler;
 import org.jboss.as.controller.AttributeDefinition;
@@ -37,7 +38,7 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
       AVERAGE_READ_TIME(ClusterWideMetricKeys.AVERAGE_READ_TIME, ModelType.LONG, true),
       AVERAGE_WRITE_TIME(ClusterWideMetricKeys.AVERAGE_WRITE_TIME, ModelType.LONG, true),
       AVERAGE_REMOVE_TIME(ClusterWideMetricKeys.AVERAGE_REMOVE_TIME, ModelType.LONG, true),
-      ELAPSED_TIME(ClusterWideMetricKeys.ELAPSED_TIME, ModelType.LONG, true),
+      TIME_SINCE_START(ClusterWideMetricKeys.TIME_SINCE_START, ModelType.LONG, true),
       EVICTIONS(ClusterWideMetricKeys.EVICTIONS, ModelType.LONG, true),
       HIT_RATIO(ClusterWideMetricKeys.HIT_RATIO, ModelType.DOUBLE, true),
       HITS(ClusterWideMetricKeys.HITS, ModelType.LONG, true),
@@ -104,7 +105,7 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
       final String cacheName = address.getLastElement().getValue();
       final String attrName = operation.require(NAME).asString();
       final ServiceController<?> controller = context.getServiceRegistry(false).getService(
-            CacheService.getServiceName(cacheContainerName, cacheName));
+            CacheServiceName.CACHE.getServiceName(cacheContainerName, cacheName));
       Cache<?, ?> cache = (Cache<?, ?>) controller.getValue();
       ClusteredCacheMetrics metric = ClusteredCacheMetrics.getStat(attrName);
       ModelNode result = new ModelNode();
@@ -129,7 +130,7 @@ public class ClusteredCacheMetricsHandler extends AbstractRuntimeOnlyHandler {
             result.set(clusterCacheStats.getAverageReadTime());
             break;
          }
-         case ELAPSED_TIME: {
+         case TIME_SINCE_START: {
             result.set(clusterCacheStats.getTimeSinceStart());
             break;
          }

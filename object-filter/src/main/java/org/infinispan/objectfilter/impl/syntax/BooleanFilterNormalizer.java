@@ -6,11 +6,12 @@ import java.util.List;
 /**
  * Applies some optimisations to a boolean expression. Most notably, it brings it to NNF (Negation normal form, see
  * http://en.wikipedia.org/wiki/Negation_normal_form). Moves negation directly near the variable by repeatedly applying
- * the DeMorgan laws. Eliminates double negation. Normalizes comparison operators by replacing 'greater' with 'less'.
- * Detects sub-expressions that are boolean constants. Simplifies boolean constants by applying boolean
- * short-circuiting. Eliminates resulting trivial conjunctions or disjunctions that have only one child. Ensures all
- * paths from root to leafs contain an alternation of conjunction and disjunction. This is achieved by absorbing the
- * children whenever a boolean sub-expression if of the same kind as the parent.
+ * the De Morgan's laws (see http://en.wikipedia.org/wiki/De_Morgan%27s_laws). Eliminates double negation. Normalizes
+ * comparison operators by replacing 'greater' with 'less'. Detects sub-expressions that are boolean constants.
+ * Simplifies boolean constants by applying boolean short-circuiting. Eliminates resulting trivial conjunctions or
+ * disjunctions that have only one child. Ensures all paths from root to leafs contain an alternation of conjunction and
+ * disjunction. This is achieved by absorbing the children whenever a boolean sub-expression if of the same kind as the
+ * parent.
  *
  * @author anistor@redhat.com
  * @since 7.0
@@ -49,6 +50,8 @@ public final class BooleanFilterNormalizer {
             }
          }
 
+         PredicateOptimisations.optimizePredicates(children, false);
+
          // simplify trivial expressions
          if (children.size() == 1) {
             return children.get(0);
@@ -77,6 +80,8 @@ public final class BooleanFilterNormalizer {
             }
          }
 
+         PredicateOptimisations.optimizePredicates(children, true);
+
          // simplify trivial expressions
          if (children.size() == 1) {
             return children.get(0);
@@ -100,8 +105,8 @@ public final class BooleanFilterNormalizer {
          if (leftChild instanceof ConstantValueExpr) {
             if (rightChild instanceof ConstantValueExpr) {
                // replace the comparison of the two constants with the actual result
-               Comparable leftValue = (Comparable) ((ConstantValueExpr) leftChild).getConstantValue();
-               Comparable rightValue = (Comparable) ((ConstantValueExpr) rightChild).getConstantValue();
+               Comparable leftValue = ((ConstantValueExpr) leftChild).getConstantValue();
+               Comparable rightValue = ((ConstantValueExpr) rightChild).getConstantValue();
                int compRes = leftValue.compareTo(rightValue);
                switch (comparisonType) {
                   case LESS:
@@ -127,28 +132,7 @@ public final class BooleanFilterNormalizer {
             leftChild = temp;
 
             // now reverse the operator too to restore the semantics
-            switch (comparisonType) {
-               case LESS:
-                  comparisonType = ComparisonExpr.Type.GREATER;
-                  break;
-               case LESS_OR_EQUAL:
-                  comparisonType = ComparisonExpr.Type.GREATER_OR_EQUAL;
-                  break;
-               case EQUAL:
-                  comparisonType = ComparisonExpr.Type.NOT_EQUAL;
-                  break;
-               case NOT_EQUAL:
-                  comparisonType = ComparisonExpr.Type.EQUAL;
-                  break;
-               case GREATER_OR_EQUAL:
-                  comparisonType = ComparisonExpr.Type.LESS_OR_EQUAL;
-                  break;
-               case GREATER:
-                  comparisonType = ComparisonExpr.Type.LESS;
-                  break;
-               default:
-                  throw new IllegalStateException("Unknown comparison type: " + comparisonType);
-            }
+            comparisonType = comparisonType.reverse();
          }
 
          // comparison operators are never negated using NotExpr
@@ -243,25 +227,10 @@ public final class BooleanFilterNormalizer {
             return ((NotExpr) booleanExpr).getChild();
          }
 
-         // interval predicates cannot be negated, they are converted instead into the opposite interval
+         // interval predicates are never negated, they are converted instead into the opposite interval
          if (booleanExpr instanceof ComparisonExpr) {
             ComparisonExpr c = (ComparisonExpr) booleanExpr;
-            switch (c.getComparisonType()) {
-               case LESS:
-                  return new ComparisonExpr(c.getLeftChild(), c.getRightChild(), ComparisonExpr.Type.GREATER_OR_EQUAL);
-               case LESS_OR_EQUAL:
-                  return new ComparisonExpr(c.getLeftChild(), c.getRightChild(), ComparisonExpr.Type.GREATER);
-               case GREATER_OR_EQUAL:
-                  return new ComparisonExpr(c.getLeftChild(), c.getRightChild(), ComparisonExpr.Type.LESS);
-               case GREATER:
-                  return new ComparisonExpr(c.getLeftChild(), c.getRightChild(), ComparisonExpr.Type.LESS_OR_EQUAL);
-               case EQUAL:
-                  return new ComparisonExpr(c.getLeftChild(), c.getRightChild(), ComparisonExpr.Type.NOT_EQUAL);
-               case NOT_EQUAL:
-                  return new ComparisonExpr(c.getLeftChild(), c.getRightChild(), ComparisonExpr.Type.EQUAL);
-               default:
-                  throw new IllegalStateException("Unexpected comparison type: " + c.getComparisonType());
-            }
+            return new ComparisonExpr(c.getLeftChild(), c.getRightChild(), c.getComparisonType().negate());
          }
 
          return new NotExpr(booleanExpr);
@@ -279,6 +248,6 @@ public final class BooleanFilterNormalizer {
    };
 
    public BooleanExpr normalize(BooleanExpr booleanExpr) {
-      return booleanExpr.acceptVisitor(simplifierVisitor);
+      return booleanExpr == null ? null : booleanExpr.acceptVisitor(simplifierVisitor);
    }
 }

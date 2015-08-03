@@ -21,7 +21,7 @@ import static org.junit.Assert.*;
  * @author anistor@redhat.com
  * @since 6.0
  */
-@Test(groups = "functional", testName = "query.dsl.QueryDslIterationTest")
+@Test(groups = "functional", testName = "query.dsl.embedded.QueryDslIterationTest")
 public class QueryDslIterationTest extends AbstractQueryDslTest {
 
    @BeforeClass(alwaysRun = true)
@@ -109,7 +109,7 @@ public class QueryDslIterationTest extends AbstractQueryDslTest {
       QueryFactory qf = getQueryFactory();
 
       Query q = qf.from(getModelFactory().getUserImplClass())
-            .setProjection("id", "name").maxResults(3).build();
+            .select("id", "name").maxResults(3).build();
 
       assertEquals(4, q.getResultSize());
 

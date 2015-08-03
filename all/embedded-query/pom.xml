@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-all-parent</artifactId>
-      <version>7.1.1-SNAPSHOT</version>
+      <version>8.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -56,7 +56,6 @@
                            <exclude>org.infinispan:infinispan-core</exclude>
                            <exclude>org.jgroups:jgroups</exclude>
                            <exclude>org.infinispan:infinispan-embedded</exclude>
-                           <exclude>org.infinispan:infinispan-query-dsl</exclude>
                            <exclude>net.jcip:jcip-annotations:jar:</exclude>
                            <exclude>org.jboss.marshalling:jboss-marshalling-osgi</exclude>
                            <exclude>org.jboss.spec.javax.transaction:jboss-transaction-api_1.1_spec:jar:</exclude>

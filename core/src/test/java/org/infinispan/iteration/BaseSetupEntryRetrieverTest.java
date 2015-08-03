@@ -1,6 +1,5 @@
 package org.infinispan.iteration;
 
-import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.container.entries.CacheEntry;
@@ -89,7 +88,7 @@ public abstract class BaseSetupEntryRetrieverTest extends MultipleCacheManagersT
          if (value != null && value.length() > beginning + length) {
             return value.substring(beginning, beginning + length);
          } else {
-            return value;
+            throw new IllegalStateException("String should be longer than truncation size!  Possible double conversion performed!");
          }
       }
    }

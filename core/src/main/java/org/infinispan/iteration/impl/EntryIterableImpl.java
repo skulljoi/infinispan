@@ -9,7 +9,6 @@ import org.infinispan.filter.KeyValueFilter;
 import org.infinispan.iteration.EntryIterable;
 
 import java.util.EnumSet;
-import java.util.Map;
 
 /**
  * This is an implementation that allows for creating new EntryIterable instances by supplying a new converter.
@@ -24,7 +23,7 @@ public class EntryIterableImpl<K, V> extends TrackingEntryIterable<K, V, V> impl
    }
 
    @Override
-   public <C> CloseableIterable<CacheEntry<K, C>> converter(Converter<? super K, ? super V, ? extends C> converter) {
+   public <C> CloseableIterable<CacheEntry<K, C>> converter(Converter<? super K, ? super V, C> converter) {
       return new TrackingEntryIterable<>(entryRetriever, filter, converter, flags, cache);
    }
 }

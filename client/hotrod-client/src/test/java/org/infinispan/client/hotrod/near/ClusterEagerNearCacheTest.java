@@ -14,6 +14,7 @@ import java.util.List;
 
 import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheConfiguration;
 
+@Deprecated
 @Test(groups = "functional", testName = "client.hotrod.near.ClusterEagerNearCacheTest")
 public class ClusterEagerNearCacheTest extends MultiHotRodServersTest {
 
@@ -43,7 +44,7 @@ public class ClusterEagerNearCacheTest extends MultiHotRodServersTest {
       for (HotRodServer server : servers)
          clientBuilder.addServer().host("127.0.0.1").port(server.getPort());
 
-      clientBuilder.nearCache().mode(getNearCacheMode());
+      clientBuilder.nearCache().mode(getNearCacheMode()).maxEntries(-1);
       return AssertsNearCache.create(this.<byte[], Object>cache(0), clientBuilder);
    }
 

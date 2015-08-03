@@ -7,12 +7,14 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import org.infinispan.client.hotrod.CacheTopologyInfo;
 import org.infinispan.client.hotrod.Flag;
 import org.infinispan.client.hotrod.MetadataValue;
 import org.infinispan.client.hotrod.RemoteCache;
@@ -24,10 +26,12 @@ import org.infinispan.client.hotrod.event.ClientListenerNotifier;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
 import org.infinispan.client.hotrod.exceptions.RemoteCacheManagerNotStartedException;
 import org.infinispan.client.hotrod.impl.operations.*;
+import org.infinispan.client.hotrod.impl.iteration.RemoteCloseableIterator;
 import org.infinispan.client.hotrod.logging.Log;
 import org.infinispan.client.hotrod.logging.LogFactory;
 import org.infinispan.client.hotrod.marshall.MarshallerUtil;
 import org.infinispan.commons.marshall.Marshaller;
+import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.concurrent.NotifyingFuture;
 import org.infinispan.commons.util.concurrent.NotifyingFutureImpl;
 
@@ -111,8 +115,13 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
 
    @Override
    public boolean replaceWithVersion(K key, V newValue, long version, int lifespanSeconds, int maxIdleTimeSeconds) {
+      return replaceWithVersion(key, newValue, version, lifespanSeconds, TimeUnit.SECONDS, maxIdleTimeSeconds, TimeUnit.SECONDS);
+   }
+
+   @Override
+   public boolean replaceWithVersion(K key, V newValue, long version, long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit) {
       assertRemoteCacheManagerIsStarted();
-      ReplaceIfUnmodifiedOperation op = operationsFactory.newReplaceIfUnmodifiedOperation(obj2bytes(key, true), obj2bytes(newValue, false), lifespanSeconds, maxIdleTimeSeconds, version);
+      ReplaceIfUnmodifiedOperation op = operationsFactory.newReplaceIfUnmodifiedOperation(obj2bytes(key, true), obj2bytes(newValue, false), lifespan, lifespanTimeUnit, maxIdle, maxIdleTimeUnit, version);
       VersionedOperationResponse response = op.execute();
       return response.getCode().isUpdated();
    }
@@ -147,6 +156,36 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
    }
 
    @Override
+   public CloseableIterator<Entry<Object, Object>> retrieveEntries(String filterConverterFactory, Set<Integer> segments, int batchSize) {
+      assertRemoteCacheManagerIsStarted();
+      if (segments != null && segments.isEmpty()) {
+         return new CloseableIterator<Entry<Object, Object>>() {
+            @Override
+            public void close() {
+            }
+
+            @Override
+            public boolean hasNext() {
+               return false;
+            }
+
+            @Override
+            public Entry<Object, Object> next() {
+               throw new NoSuchElementException();
+            }
+         };
+      }
+      RemoteCloseableIterator remoteCloseableIterator = new RemoteCloseableIterator(operationsFactory, filterConverterFactory, segments, batchSize, marshaller);
+      remoteCloseableIterator.start();
+      return remoteCloseableIterator;
+   }
+
+   @Override
+   public CloseableIterator<Entry<Object, Object>> retrieveEntries(String filterConverterFactory, int batchSize) {
+      return retrieveEntries(filterConverterFactory, null, batchSize);
+   }
+
+   @Override
    public VersionedValue<V> getVersioned(K key) {
       assertRemoteCacheManagerIsStarted();
       GetWithVersionOperation op = operationsFactory.newGetWithVersionOperation(obj2bytes(key, true));
@@ -165,9 +204,16 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
    @Override
    public void putAll(Map<? extends K, ? extends V> map, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
       assertRemoteCacheManagerIsStarted();
-      for (Entry<? extends K, ? extends V> entry : map.entrySet()) {
-         put(entry.getKey(), entry.getValue(), lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
+      applyDefaultExpirationFlags(lifespan, maxIdleTime);
+      if (log.isTraceEnabled()) {
+         log.tracef("About to putAll entries (%s) lifespan:%d (%s), maxIdle:%d (%s)", map, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
       }
+      Map<byte[], byte[]> byteMap = new HashMap<>();
+      for (Entry<? extends K, ? extends V> entry : map.entrySet()) {
+         byteMap.put(obj2bytes(entry.getKey(),  true), obj2bytes(entry.getValue(), false));
+      }
+      PutAllOperation op = operationsFactory.newPutAllOperation(byteMap, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
+      op.execute();
    }
 
    @Override
@@ -227,13 +273,11 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
    @Override
    public V put(K key, V value, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
       assertRemoteCacheManagerIsStarted();
-      int lifespanSecs = toSeconds(lifespan, lifespanUnit);
-      int maxIdleSecs = toSeconds(maxIdleTime, maxIdleTimeUnit);
       applyDefaultExpirationFlags(lifespan, maxIdleTime);
       if (log.isTraceEnabled()) {
-         log.tracef("About to add (K,V): (%s, %s) lifespanSecs:%d, maxIdleSecs:%d", key, value, lifespanSecs, maxIdleSecs);
+         log.tracef("About to add (K,V): (%s, %s) lifespan:%d, maxIdle:%d", key, value, lifespan, maxIdleTime);
       }
-      PutOperation op = operationsFactory.newPutKeyValueOperation(obj2bytes(key, true), obj2bytes(value, false), lifespanSecs, maxIdleSecs);
+      PutOperation op = operationsFactory.newPutKeyValueOperation(obj2bytes(key, true), obj2bytes(value, false), lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
       byte[] result = op.execute();
       return MarshallerUtil.bytes2obj(marshaller, result);
    }
@@ -242,10 +286,8 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
    @Override
    public V putIfAbsent(K key, V value, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
       assertRemoteCacheManagerIsStarted();
-      int lifespanSecs = toSeconds(lifespan, lifespanUnit);
-      int maxIdleSecs = toSeconds(maxIdleTime, maxIdleTimeUnit);
       applyDefaultExpirationFlags(lifespan, maxIdleTime);
-      PutIfAbsentOperation op = operationsFactory.newPutIfAbsentOperation(obj2bytes(key, true), obj2bytes(value, false), lifespanSecs, maxIdleSecs);
+      PutIfAbsentOperation op = operationsFactory.newPutIfAbsentOperation(obj2bytes(key, true), obj2bytes(value, false), lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
       byte[] bytes = op.execute();
       return MarshallerUtil.bytes2obj(marshaller, bytes);
    }
@@ -253,10 +295,8 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
    @Override
    public V replace(K key, V value, long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
       assertRemoteCacheManagerIsStarted();
-      int lifespanSecs = toSeconds(lifespan, lifespanUnit);
-      int maxIdleSecs = toSeconds(maxIdleTime, maxIdleTimeUnit);
       applyDefaultExpirationFlags(lifespan, maxIdleTime);
-      ReplaceOperation op = operationsFactory.newReplaceOperation(obj2bytes(key, true), obj2bytes(value, false), lifespanSecs, maxIdleSecs);
+      ReplaceOperation op = operationsFactory.newReplaceOperation(obj2bytes(key, true), obj2bytes(value, false), lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
       byte[] bytes = op.execute();
       return MarshallerUtil.bytes2obj(marshaller, bytes);
    }
@@ -424,6 +464,27 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
          log.tracef("For key(%s) returning %s", key, result);
       }
       return result;
+   }
+
+   @Override
+   public Map<K, V> getAll(Set<? extends K> keys) {
+      assertRemoteCacheManagerIsStarted();
+      if (log.isTraceEnabled()) {
+         log.tracef("About to getAll entries (%s)", keys);
+      }
+      Set<byte[]> byteKeys = new HashSet<>(keys.size());
+      for (K key : keys) {
+         byteKeys.add(obj2bytes(key, true));
+      }
+      GetAllOperation op = operationsFactory.newGetAllOperation(byteKeys);
+      Map<byte[], byte[]> result = op.execute();
+      Map<K,V> toReturn = new HashMap<K,V>();
+      for (Map.Entry<byte[], byte[]> entry : result.entrySet()) {
+         V value = MarshallerUtil.bytes2obj(marshaller, entry.getValue());
+         K key = MarshallerUtil.bytes2obj(marshaller, entry.getKey());
+         toReturn.put(key, value);
+      }
+      return Collections.unmodifiableMap(toReturn);
    }
 
    @Override
@@ -599,10 +660,6 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
       return new MetadataValueImpl<V>(value.getCreated(), value.getLifespan(), value.getLastUsed(), value.getMaxIdle(), value.getVersion(), valueObj);
    }
 
-   private int toSeconds(long duration, TimeUnit timeUnit) {
-      return (int) timeUnit.toSeconds(duration);
-   }
-
    private void assertRemoteCacheManagerIsStarted() {
       if (!remoteCacheManager.isStarted()) {
          String message = "Cannot perform operations on a cache associated with an unstarted RemoteCacheManager. Use RemoteCacheManager.start before using the remote cache.";
@@ -642,5 +699,23 @@ public class RemoteCacheImpl<K, V> extends RemoteCacheSupport<K, V> {
           toReturn.add(key);
        }
        return Collections.unmodifiableSet(toReturn);
+   }
+
+	@Override
+	public <T> T execute(String taskName, Map<String, ?> params) {
+		assertRemoteCacheManagerIsStarted();
+		Map<String, byte[]> marshalledParams = new HashMap<>();
+		if (params != null) {
+   		for(java.util.Map.Entry<String, ?> entry : params.entrySet()) {
+   			marshalledParams.put(entry.getKey(), obj2bytes(entry.getValue(), false));
+   		}
+		}
+		ExecuteOperation op = operationsFactory.newExecuteOperation(taskName, marshalledParams);
+		return MarshallerUtil.bytes2obj(marshaller, op.execute());
+	}
+
+   @Override
+   public CacheTopologyInfo getCacheTopologyInfo() {
+      return operationsFactory.getCacheTopologyInfo();
    }
 }

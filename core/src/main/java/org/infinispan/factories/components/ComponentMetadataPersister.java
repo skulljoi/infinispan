@@ -167,11 +167,17 @@ public class ComponentMetadataPersister extends ComponentMetadataRepo {
    }
 
    private static String extractFqcn(String path, File f) {
-      return f.getAbsolutePath().replace(path, "").replace(File.separator, ".").replace(".class", "").replaceFirst("\\.+", "");
+      return f.getAbsolutePath().replace(path, "").replace(File.separator, ".").replaceAll("\\.class$", "").replaceFirst("\\.+", "");
    }
 
    private static void writeMetadata(String metadataFile) throws IOException {
-      FileOutputStream fileOutputStream = new FileOutputStream(metadataFile);
+      File file = new File(metadataFile);
+      File parent = file.getParentFile();
+      if(!parent.exists() && !parent.mkdirs()){
+         throw new IllegalStateException("Couldn't create dir: " + parent);
+      }
+
+      FileOutputStream fileOutputStream = new FileOutputStream(file);
       BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(fileOutputStream);
       ObjectOutputStream objectOutputStream = new ObjectOutputStream(bufferedOutputStream);
       objectOutputStream.writeObject(repo.componentMetadataMap);

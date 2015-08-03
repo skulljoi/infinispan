@@ -1,7 +1,6 @@
 package org.infinispan.server.hotrod
 
 import javax.net.ssl.SSLPeerUnverifiedException
-
 import io.netty.buffer.ByteBuf
 import io.netty.channel.Channel
 import java.io.IOException
@@ -10,7 +9,6 @@ import org.infinispan.commons.CacheException
 import org.infinispan.container.entries.CacheEntry
 import org.infinispan.container.versioning.NumericVersion
 import org.infinispan.context.Flag.{SKIP_CACHE_LOAD, SKIP_INDEXING, IGNORE_RETURN_VALUES}
-import org.infinispan.distexec.mapreduce._
 import org.infinispan.remoting.transport.jgroups.SuspectException
 import org.infinispan.server.core.Operation._
 import org.infinispan.server.core._
@@ -34,11 +32,17 @@ import java.security.Principal
 import org.infinispan.server.core.security.InetAddressPrincipal
 import java.net.InetSocketAddress
 import org.infinispan.server.core.security.simple.SimpleUserPrincipal
-import java.util.HashMap
 import scala.collection.immutable
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import org.infinispan.server.core.transport.SaslQopHandler
+import org.infinispan.scripting.ScriptingManager
+import javax.script.SimpleBindings
+import org.infinispan.commons.marshall.jboss.GenericJBossMarshaller
+import java.util.{BitSet => JavaBitSet}
+
+import java.util.HashSet
+import java.util.HashMap
 
 /**
  * HotRod protocol decoder specific for specification version 2.0.
@@ -78,6 +82,12 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
          case 0x25 => (AddClientListenerRequest, false)
          case 0x27 => (RemoveClientListenerRequest, false)
          case 0x29 => (SizeRequest, true)
+         case 0x2B => (ExecRequest, true)
+         case 0x2D => (PutAllRequest, false)
+         case 0x2F => (GetAllRequest, false)
+         case 0x31 => (IterationStartRequest, false)
+         case 0x33 => (IterationNextRequest, false)
+         case 0x35 => (IterationEndRequest, false)
          case _ => throw new HotRodUnknownOperationException(
             "Unknown operation: " + streamOp, version, messageId)
       }
@@ -95,7 +105,6 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
       header.flag = flag
       header.clientIntel = clientIntelligence
       header.topologyId = topologyId
-      header.decoder = this
       endOfOp
    }
 
@@ -112,20 +121,25 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
    override def readParameters(header: HotRodHeader, buffer: ByteBuf): (RequestParameters, Boolean) = {
       header.op match {
          case RemoveRequest => (null, true)
-         case RemoveIfUnmodifiedRequest => (new RequestParameters(-1, -1, -1, buffer.readLong), true)
-         case ReplaceIfUnmodifiedRequest => {
-            val lifespan = readLifespanOrMaxIdle(buffer, hasFlag(header, ProtocolFlag.DefaultLifespan))
-            val maxIdle = readLifespanOrMaxIdle(buffer, hasFlag(header, ProtocolFlag.DefaultMaxIdle))
+         case RemoveIfUnmodifiedRequest => (new RequestParameters(-1, new ExpirationParam(-1, TimeUnitValue.SECONDS), new ExpirationParam(-1, TimeUnitValue.SECONDS), buffer.readLong), true)
+         case ReplaceIfUnmodifiedRequest =>
+            val expirationParams = readLifespanMaxIdle(buffer, hasFlag(header, ProtocolFlag.DefaultLifespan), hasFlag(header, ProtocolFlag.DefaultMaxIdle), header.version)
             val version = buffer.readLong
             val valueLength = readUnsignedInt(buffer)
-            (new RequestParameters(valueLength, lifespan, maxIdle, version), false)
-         }
-         case _ => {
-            val lifespan = readLifespanOrMaxIdle(buffer, hasFlag(header, ProtocolFlag.DefaultLifespan))
-            val maxIdle = readLifespanOrMaxIdle(buffer, hasFlag(header, ProtocolFlag.DefaultMaxIdle))
+            (new RequestParameters(valueLength, expirationParams._1, expirationParams._2, version), false)
+         case PutAllRequest =>
+            // Since we have custom code handling for valueLength to allocate an array
+            // always we have to pass back false and set the checkpoint manually...
+            val expirationParams = readLifespanMaxIdle(buffer, hasFlag(header, ProtocolFlag.DefaultLifespan), hasFlag(header, ProtocolFlag.DefaultMaxIdle), header.version)
             val valueLength = readUnsignedInt(buffer)
-            (new RequestParameters(valueLength, lifespan, maxIdle, -1), false)
-         }
+            (new RequestParameters(valueLength, expirationParams._1, expirationParams._2, -1), true)
+         case GetAllRequest =>
+            val count = readUnsignedInt(buffer)
+            (new RequestParameters(count, new ExpirationParam(-1, TimeUnitValue.SECONDS), new ExpirationParam(-1, TimeUnitValue.SECONDS), -1), true)
+         case _ =>
+            val expirationParams = readLifespanMaxIdle(buffer, hasFlag(header, ProtocolFlag.DefaultLifespan), hasFlag(header, ProtocolFlag.DefaultMaxIdle), header.version)
+            val valueLength = readUnsignedInt(buffer)
+            (new RequestParameters(valueLength, expirationParams._1, expirationParams._2, -1), false)
       }
    }
 
@@ -133,26 +147,42 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
       (h.flag & f.id) == f.id
    }
 
-   private def readLifespanOrMaxIdle(buffer: ByteBuf, useDefault: Boolean): Int = {
-      val stream = readUnsignedInt(buffer)
-      if (stream <= 0) {
-         if (useDefault)
-            EXPIRATION_DEFAULT
-         else
-            EXPIRATION_NONE
-      } else stream
+   private def readLifespanMaxIdle(buffer: ByteBuf, usingDefaultLifespan: Boolean, usingDefaultMaxIdle: Boolean, version: Byte): (ExpirationParam, ExpirationParam) = {
+      def readDuration(useDefault: Boolean) = {
+         val duration = readUnsignedInt(buffer)
+         if (duration <= 0) {
+            if (useDefault) EXPIRATION_DEFAULT else EXPIRATION_NONE
+         } else duration
+      }
+      def readDurationIfNeeded(timeUnitValue: TimeUnitValue) = {
+         if (timeUnitValue.isDefault) EXPIRATION_DEFAULT.toLong
+         else {
+            if (timeUnitValue.isInfinite) EXPIRATION_NONE.toLong else readUnsignedLong(buffer)
+         }
+      }
+      version match {
+         case VERSION_22 | VERSION_23 =>
+            val timeUnits = TimeUnitValue.decodePair(buffer.readByte())
+            val lifespanDuration = readDurationIfNeeded(timeUnits._1)
+            val maxIdleDuration = readDurationIfNeeded(timeUnits._2)
+            (new ExpirationParam(lifespanDuration, timeUnits._1), new ExpirationParam(maxIdleDuration, timeUnits._2))
+         case _ =>
+            val lifespan = readDuration(usingDefaultLifespan)
+            val maxIdle = readDuration(usingDefaultMaxIdle)
+            (new ExpirationParam(lifespan, TimeUnitValue.SECONDS), new ExpirationParam(maxIdle, TimeUnitValue.SECONDS))
+      }
    }
 
-   override def createSuccessResponse(header: HotRodHeader, prev: Array[Byte]): AnyRef =
+   override def createSuccessResponse(header: HotRodHeader, prev: Array[Byte]): Response =
       createResponse(header, toResponse(header.op), Success, prev)
 
-   override def createNotExecutedResponse(header: HotRodHeader, prev: Array[Byte]): AnyRef =
+   override def createNotExecutedResponse(header: HotRodHeader, prev: Array[Byte]): Response =
       createResponse(header, toResponse(header.op), OperationNotExecuted, prev)
 
-   override def createNotExistResponse(header: HotRodHeader): AnyRef =
+   override def createNotExistResponse(header: HotRodHeader): Response =
       createResponse(header, toResponse(header.op), KeyDoesNotExist, null)
 
-   private def createResponse(h: HotRodHeader, op: OperationResponse, st: OperationStatus, prev: Array[Byte]): AnyRef = {
+   private def createResponse(h: HotRodHeader, op: OperationResponse, st: OperationStatus, prev: Array[Byte]): Response = {
       if (hasFlag(h, ForceReturnPreviousValue)) {
          val adjustedStatus = (h.op, st) match {
             case (PutRequest, Success) => SuccessWithPrevious
@@ -179,17 +209,17 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
          new Response(h.version, h.messageId, h.cacheName, h.clientIntel, op, st, h.topologyId)
    }
 
-   override def createGetResponse(h: HotRodHeader, entry: CacheEntry[Array[Byte], Array[Byte]]): AnyRef = {
+   override def createGetResponse(h: HotRodHeader, entry: CacheEntry[Array[Byte], Array[Byte]]): Response = {
       val op = h.op
       if (entry != null && op == GetRequest)
          new GetResponse(h.version, h.messageId, h.cacheName, h.clientIntel,
             GetResponse, Success, h.topologyId,
-            Some(entry.getValue.asInstanceOf[Array[Byte]]))
+            Some(entry.getValue))
       else if (entry != null && op == GetWithVersionRequest) {
          val version = entry.getMetadata.version().asInstanceOf[NumericVersion].getVersion
          new GetWithVersionResponse(h.version, h.messageId, h.cacheName,
             h.clientIntel, GetWithVersionResponse, Success, h.topologyId,
-            Some(entry.getValue.asInstanceOf[Array[Byte]]), version)
+            Some(entry.getValue), version)
       } else if (op == GetRequest)
          new GetResponse(h.version, h.messageId, h.cacheName, h.clientIntel,
             GetResponse, KeyDoesNotExist, h.topologyId, None)
@@ -199,20 +229,19 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
             h.topologyId, None, 0)
    }
 
-   override def customReadHeader(h: HotRodHeader, buffer: ByteBuf, cache: Cache, server: HotRodServer, ctx: ChannelHandlerContext): AnyRef = {
+   override def customReadHeader(h: HotRodHeader, buffer: ByteBuf, cache: Cache,
+       server: HotRodServer, ctx: ChannelHandlerContext): AnyRef = {
       h.op match {
-         case ClearRequest => {
+         case ClearRequest =>
             // Get an optimised cache in case we can make the operation more efficient
             cache.clear()
             new Response(h.version, h.messageId, h.cacheName, h.clientIntel,
                ClearResponse, Success, h.topologyId)
-         }
          case PingRequest => new Response(h.version, h.messageId, h.cacheName,
             h.clientIntel, PingResponse, Success, h.topologyId)
-         case AuthMechListRequest => {
+         case AuthMechListRequest =>
             new AuthMechListResponse(h.version, h.messageId, h.cacheName, h.clientIntel, server.getConfiguration.authentication.allowedMechs.asScala.toSet, h.topologyId)
-         }
-         case AuthRequest => {
+         case AuthRequest =>
             if (!server.getConfiguration.authentication.enabled) {
                createErrorResponse(h, log.invalidOperation)
             } else {
@@ -255,12 +284,12 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
                      case e: SSLPeerUnverifiedException => // ignore
                   }
                   decoder.subject = decoder.callbackHandler.getSubjectUserInfo(extraPrincipals).getSubject
-                  val qop = decoder.saslServer.getNegotiatedProperty(Sasl.QOP).asInstanceOf[String];
+                  val qop = decoder.saslServer.getNegotiatedProperty(Sasl.QOP).asInstanceOf[String]
                   if (qop != null && (qop.equalsIgnoreCase("auth-int") || qop.equalsIgnoreCase("auth-conf"))) {
                      val qopHandler = new SaslQopHandler(decoder.saslServer)
                      ctx.pipeline.addBefore("decoder", "saslQop", qopHandler)
                   } else {
-                     decoder.saslServer.dispose
+                     decoder.saslServer.dispose()
                      decoder.callbackHandler = null
                      decoder.saslServer = null
                   }
@@ -269,17 +298,33 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
                   new AuthResponse(h.version, h.messageId, h.cacheName, h.clientIntel, serverChallenge, h.topologyId)
                }
             }
-         }
          case SizeRequest =>
             val size = cache.size()
             new SizeResponse(h.version, h.messageId, h.cacheName, h.clientIntel,
                h.topologyId, size)
+         case ExecRequest =>
+            val marshaller = Option(server.getMarshaller).getOrElse(new GenericJBossMarshaller)
+            val name = readString(buffer)
+            val paramCount = readUnsignedInt(buffer)
+            val params = new HashMap[String, Object]
+            for (i <- 0 until paramCount) {
+               val paramName = readString(buffer)
+               val paramValue = marshaller.objectFromByteBuffer(readRangedBytes(buffer))
+               params.put(paramName, paramValue)
+            }
+            params.put("marshaller", marshaller)
+            params.put("cache", cache)
+            val scriptingManager = SecurityActions.getCacheGlobalComponentRegistry(cache).getComponent(classOf[ScriptingManager])
+            scriptingManager.setMarshaller(marshaller)
+            val result: Any = scriptingManager.runScript(name, cache, new SimpleBindings(params)).get
+            new ExecResponse(h.version, h.messageId, h.cacheName, h.clientIntel, h.topologyId, marshaller.objectToByteBuffer(result))
       }
    }
 
-   override def customReadKey(h: HotRodHeader, buffer: ByteBuf, cache: Cache, server: HotRodServer, ch: Channel): AnyRef = {
+   override def customReadKey(decoder: HotRodDecoder, h: HotRodHeader, buffer: ByteBuf,
+       cache: Cache, server: HotRodServer, ch: Channel): AnyRef = {
       h.op match {
-         case RemoveIfUnmodifiedRequest => {
+         case RemoveIfUnmodifiedRequest =>
             val k = readKey(buffer)
             val params = readParameters(h, buffer)._1
             val entry = cache.getCacheEntry(k)
@@ -299,8 +344,7 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
             } else {
                createResponse(h, RemoveIfUnmodifiedResponse, KeyDoesNotExist, null)
             }
-         }
-         case ContainsKeyRequest => {
+         case ContainsKeyRequest =>
             val k = readKey(buffer)
             if (cache.containsKey(k))
                new Response(h.version, h.messageId, h.cacheName, h.clientIntel,
@@ -308,40 +352,36 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
             else
                new Response(h.version, h.messageId, h.cacheName, h.clientIntel,
                   ContainsKeyResponse, KeyDoesNotExist, h.topologyId)
-         }
-         case BulkGetRequest => {
+         case BulkGetRequest =>
             val count = readUnsignedInt(buffer)
             if (isTrace) trace("About to create bulk response, count = %d", count)
             new BulkGetResponse(h.version, h.messageId, h.cacheName, h.clientIntel,
                BulkGetResponse, Success, h.topologyId, count)
-         }
-         case BulkGetKeysRequest => {
+         case BulkGetKeysRequest =>
             val scope = readUnsignedInt(buffer)
             if (isTrace) trace("About to create bulk get keys response, scope = %d", scope)
             new BulkGetKeysResponse(h.version, h.messageId, h.cacheName,
                h.clientIntel, BulkGetKeysResponse, Success, h.topologyId, scope)
-         }
-         case GetWithMetadataRequest => {
+         case GetWithMetadataRequest =>
             val k = readKey(buffer)
             getKeyMetadata(h, k, cache)
-         }
-         case QueryRequest => {
+         case QueryRequest =>
             val query = readRangedBytes(buffer)
             val result = server.getQueryFacades.head.query(cache, query)
             new QueryResponse(h.version, h.messageId, h.cacheName, h.clientIntel,
                h.topologyId, result)
-         }
          case AddClientListenerRequest =>
             val listenerId = readRangedBytes(buffer)
             val includeState = buffer.readByte() == 1
             val filterFactoryInfo = readNamedFactory(buffer)
             val converterFactoryInfo = readNamedFactory(buffer)
             val useRawData = h.version match {
-               case VERSION_21 => buffer.readByte() == 1
+               case VERSION_21 | VERSION_22 | VERSION_23 => buffer.readByte() == 1
                case _ => false
             }
             val reg = server.getClientListenerRegistry
-            reg.addClientListener(ch, h, listenerId, cache, includeState, filterFactoryInfo, converterFactoryInfo, useRawData)
+            reg.addClientListener(ch, h, listenerId, cache, includeState,
+                  (filterFactoryInfo, converterFactoryInfo), useRawData)
             createSuccessResponse(h, null)
          case RemoveClientListenerRequest =>
             val listenerId = readRangedBytes(buffer)
@@ -351,6 +391,23 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
                createSuccessResponse(h, null)
             else
                createNotExecutedResponse(h, null)
+         case PutAllRequest | GetAllRequest =>
+            decoder.checkpointTo(HotRodDecoderState.DECODE_PARAMETERS)
+         case IterationStartRequest =>
+            val segments = readOptRangedBytes(buffer)
+            val filterConverterFactory = readOptString(buffer)
+            val batchSize = readUnsignedInt(buffer)
+            val iterationId = server.iterationManager.start(cache.getName, segments.map(JavaBitSet.valueOf), filterConverterFactory, batchSize)
+            new IterationStartResponse(h.version, h.messageId, h.cacheName, h.clientIntel, h.topologyId, iterationId)
+         case IterationNextRequest =>
+            val iterationId = readString(buffer)
+            val iterationResult = server.iterationManager.next(cache.getName, iterationId)
+            new IterationNextResponse(h.version, h.messageId, h.cacheName, h.clientIntel, h.topologyId, iterationResult)
+         case IterationEndRequest =>
+            val iterationId = readString(buffer)
+            val removed = server.iterationManager.close(cache.getName, iterationId)
+            new Response(h.version, h.messageId, h.cacheName, h.clientIntel, IterationEndResponse, if (removed) Success else InvalidIteration, h.topologyId)
+         case _ => null
       }
    }
 
@@ -392,9 +449,44 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
       }
    }
 
-   override def customReadValue(header: HotRodHeader, buffer: ByteBuf, cache: Cache): AnyRef = null
+   override def customReadValue(decoder: HotRodDecoder, h: HotRodHeader,
+       hrCtx: CacheDecodeContext, buffer: ByteBuf, cache: Cache): AnyRef = {
+      h.op match {
+         case PutAllRequest =>
+            var map = hrCtx.putAllMap
+            if (map == null) {
+              map = new HashMap[Bytes, Bytes]
+              hrCtx.putAllMap = map
+            }
+            for (i <- map.size until hrCtx.params.valueLength) {
+              val k = readRangedBytes(buffer)
+              val v = readRangedBytes(buffer)
+              map.put(k, v)
+              // We check point after each read entry
+              decoder.checkpoint
+            }
+            cache.putAll(map, hrCtx.buildMetadata)
+            new Response(h.version, h.messageId, h.cacheName, h.clientIntel,
+               PutAllResponse, Success, h.topologyId)
+         case GetAllRequest =>
+           var set = hrCtx.getAllSet
+           if (set == null) {
+             set = new HashSet[Bytes]
+             hrCtx.getAllSet = set
+           }
+           for (i <- set.size until hrCtx.params.valueLength) {
+             val key = readRangedBytes(buffer)
+             set.add(key)
+             decoder.checkpoint
+           }
+           val results = cache.getAll(set)
+           new GetAllResponse(h.version, h.messageId, h.cacheName, h.clientIntel,
+               GetAllResponse, Success, h.topologyId, immutable.Map[Bytes, Bytes]() ++ results.asScala)
+        case _ => null
+     }
+   }
 
-   override def createStatsResponse(h: HotRodHeader, cacheStats: Stats, t: NettyTransport): AnyRef = {
+   override def createStatsResponse(h: HotRodHeader, cacheStats: Stats, t: NettyTransport): StatsResponse = {
       val stats = mutable.Map.empty[String, String]
       stats += ("timeSinceStart" -> cacheStats.getTimeSinceStart.toString)
       stats += ("currentNumberOfEntries" -> cacheStats.getCurrentNumberOfEntries.toString)
@@ -443,7 +535,17 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
 
    private def createServerErrorResponse(h: HotRodHeader, t: Throwable): ErrorResponse = {
       new ErrorResponse(h.version, h.messageId, h.cacheName, h.clientIntel,
-         ServerError, h.topologyId, t.toString)
+         ServerError, h.topologyId, createErrorMsg(t))
+   }
+
+   def createErrorMsg(t: Throwable): String = {
+      val causes = mutable.LinkedHashSet[Throwable]()
+      var initial = t
+      while (initial != null && !causes.contains(initial)) {
+         causes += initial
+         initial = initial.getCause
+      }
+      causes.mkString("\n")
    }
 
    override def getOptimizedCache(h: HotRodHeader, c: Cache): Cache = {
@@ -508,4 +610,18 @@ object Decoder2x extends AbstractVersionedDecoder with ServerConstants with Log 
       if (realm >= 0) id.substring(0, realm) else id
    }
 
+   /**
+    * Convert an expiration value into milliseconds
+    */
+   override def toMillis(param: ExpirationParam, h: SuitableHeader): Long = {
+      if (h.version == VERSION_22 | h.version == VERSION_23) {
+         if (param.duration > 0) {
+            val javaTimeUnit = param.unit.toJavaTimeUnit(h)
+            javaTimeUnit.toMillis(param.duration)
+         } else {
+            param.duration
+         }
+      }
+      else super.toMillis(param, h)
+   }
 }

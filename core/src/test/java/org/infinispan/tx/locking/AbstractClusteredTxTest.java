@@ -1,15 +1,15 @@
 package org.infinispan.tx.locking;
 
-import java.util.Collections;
-import java.util.Map;
-import javax.transaction.HeuristicMixedException;
-import javax.transaction.SystemException;
-
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.transaction.tm.DummyTransactionManager;
 import org.testng.annotations.Test;
 
-import static org.testng.Assert.assertEquals;
+import javax.transaction.HeuristicMixedException;
+import javax.transaction.HeuristicRollbackException;
+import javax.transaction.SystemException;
+import java.util.Collections;
+import java.util.Map;
+
 import static org.testng.Assert.assertNull;
 
 /**
@@ -46,13 +46,6 @@ public abstract class AbstractClusteredTxTest extends MultipleCacheManagersTest 
       assertLocking();
    }
 
-   public void testClear() throws Exception {
-      cache(0).put(k, "v");
-      tm(0).begin();
-      cache(0).clear();
-      assertLocking();
-   }
-
    public void testPutAll() throws Exception {
       Map m = Collections.singletonMap(k, "v");
       tm(0).begin();
@@ -80,19 +73,15 @@ public abstract class AbstractClusteredTxTest extends MultipleCacheManagersTest 
    protected void commit() {
       DummyTransactionManager dtm = (DummyTransactionManager) tm(0);
       try {
-         dtm.getTransaction().runCommitTx();
-      } catch (HeuristicMixedException e) {
+         dtm.getTransaction().runCommit(false);
+      } catch (HeuristicMixedException | HeuristicRollbackException e) {
          throw new RuntimeException(e);
       }
    }
 
    protected void prepare() {
       DummyTransactionManager dtm = (DummyTransactionManager) tm(0);
-      try {
-         dtm.getTransaction().runPrepare();
-      } catch (SystemException e) {
-         throw new RuntimeException(e);
-      }
+      dtm.getTransaction().runPrepare();
    }
 
    protected void rollback() {

@@ -1,5 +1,9 @@
 package org.infinispan.context;
 
+import org.infinispan.commands.DataCommand;
+import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.context.impl.LocalTxInvocationContext;
 import org.infinispan.context.impl.NonTxInvocationContext;
@@ -29,9 +33,9 @@ public class NonTransactionalInvocationContextFactory extends AbstractInvocation
    @Override
    public InvocationContext createInvocationContext(boolean isWrite, int keyCount) {
       if (keyCount == 1) {
-         return new SingleKeyNonTxInvocationContext(true, keyEq);
+         return new SingleKeyNonTxInvocationContext(null, keyEq);
       } else if (keyCount > 0) {
-         return new NonTxInvocationContext(keyCount, true, keyEq);
+         return new NonTxInvocationContext(keyCount, null, keyEq);
       }
       return createInvocationContext(null, false);
    }
@@ -43,20 +47,18 @@ public class NonTransactionalInvocationContextFactory extends AbstractInvocation
 
    @Override
    public NonTxInvocationContext createNonTxInvocationContext() {
-      NonTxInvocationContext ctx = new NonTxInvocationContext(keyEq);
-      ctx.setOriginLocal(true);
+      NonTxInvocationContext ctx = new NonTxInvocationContext(null, keyEq);
       return ctx;
    }
 
    @Override
    public InvocationContext createSingleKeyNonTxInvocationContext() {
-      return new SingleKeyNonTxInvocationContext(true, keyEq);
+      return new SingleKeyNonTxInvocationContext(null, keyEq);
    }
 
    @Override
    public NonTxInvocationContext createRemoteInvocationContext(Address origin) {
-      NonTxInvocationContext ctx = new NonTxInvocationContext(keyEq);
-      ctx.setOrigin(origin);
+      NonTxInvocationContext ctx = new NonTxInvocationContext(origin, keyEq);
       return ctx;
    }
 
@@ -73,5 +75,15 @@ public class NonTransactionalInvocationContextFactory extends AbstractInvocation
 
    private IllegalStateException exception() {
       return new IllegalStateException("This is a non-transactional cache - why need to build a transactional context for it!");
+   }
+
+   @Override
+   public InvocationContext createRemoteInvocationContextForCommand(VisitableCommand cacheCommand,
+                                                                          Address origin) {
+      if (cacheCommand instanceof DataCommand && !(cacheCommand instanceof InvalidateCommand)) {
+         return new SingleKeyNonTxInvocationContext(origin, keyEq);
+      } else {
+         return super.createRemoteInvocationContextForCommand(cacheCommand, origin);
+      }
    }
 }

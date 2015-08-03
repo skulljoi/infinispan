@@ -2,6 +2,7 @@ package org.infinispan.client.hotrod.impl.operations;
 
 import net.jcip.annotations.Immutable;
 
+import org.infinispan.client.hotrod.CacheTopologyInfo;
 import org.infinispan.client.hotrod.Flag;
 import org.infinispan.client.hotrod.RemoteCacheManager;
 import org.infinispan.client.hotrod.event.ClientListenerNotifier;
@@ -10,14 +11,12 @@ import org.infinispan.client.hotrod.impl.protocol.HotRodConstants;
 import org.infinispan.client.hotrod.impl.query.RemoteQuery;
 import org.infinispan.client.hotrod.impl.transport.Transport;
 import org.infinispan.client.hotrod.impl.transport.TransportFactory;
-import org.infinispan.commons.util.InfinispanCollections;
 
-import java.net.SocketAddress;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.UUID;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -69,6 +68,11 @@ public class OperationsFactory implements HotRodConstants {
             codec, transportFactory, key, cacheNameBytes, topologyId, flags());
    }
 
+   public GetAllOperation newGetAllOperation(Set<byte[]> keys) {
+      return new GetAllOperation(
+            codec, transportFactory, keys, cacheNameBytes, topologyId, flags());
+   }
+
    public RemoveOperation newRemoveOperation(byte[] key) {
       return new RemoveOperation(
             codec, transportFactory, key, cacheNameBytes, topologyId, flags());
@@ -80,10 +84,10 @@ public class OperationsFactory implements HotRodConstants {
    }
 
    public ReplaceIfUnmodifiedOperation newReplaceIfUnmodifiedOperation(byte[] key,
-            byte[] value, int lifespanSeconds, int maxIdleTimeSeconds, long version) {
+            byte[] value, long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit, long version) {
       return new ReplaceIfUnmodifiedOperation(
             codec, transportFactory, key, cacheNameBytes, topologyId, flags(),
-            value, lifespanSeconds, maxIdleTimeSeconds, version);
+            value, lifespan, lifespanTimeUnit, maxIdle, maxIdleTimeUnit, version);
    }
 
    public GetWithVersionOperation newGetWithVersionOperation(byte[] key) {
@@ -102,24 +106,31 @@ public class OperationsFactory implements HotRodConstants {
    }
 
    public PutOperation newPutKeyValueOperation(byte[] key, byte[] value,
-            int lifespanSecs, int maxIdleSecs) {
+          long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit) {
       return new PutOperation(
             codec, transportFactory, key, cacheNameBytes, topologyId, flags(),
-            value, lifespanSecs, maxIdleSecs);
+            value, lifespan, lifespanTimeUnit, maxIdle, maxIdleTimeUnit);
+   }
+
+   public PutAllOperation newPutAllOperation(Map<byte[], byte[]> map,
+          long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit) {
+      return new PutAllOperation(
+            codec, transportFactory, map, cacheNameBytes, topologyId, flags(),
+            lifespan, lifespanTimeUnit, maxIdle, maxIdleTimeUnit);
    }
 
    public PutIfAbsentOperation newPutIfAbsentOperation(byte[] key, byte[] value,
-            int lifespanSecs, int maxIdleSecs) {
+             long lifespan, TimeUnit lifespanUnit, long maxIdleTime, TimeUnit maxIdleTimeUnit) {
       return new PutIfAbsentOperation(
             codec, transportFactory, key, cacheNameBytes, topologyId, flags(),
-            value, lifespanSecs, maxIdleSecs);
+            value, lifespan, lifespanUnit, maxIdleTime, maxIdleTimeUnit);
    }
 
    public ReplaceOperation newReplaceOperation(byte[] key, byte[] values,
-            int lifespanSecs, int maxIdleSecs) {
+           long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit) {
       return new ReplaceOperation(
             codec, transportFactory, key, cacheNameBytes, topologyId, flags(),
-            values, lifespanSecs, maxIdleSecs);
+            values, lifespan, lifespanTimeUnit, maxIdle, maxIdleTimeUnit);
    }
 
    public ContainsKeyOperation newContainsKeyOperation(byte[] key) {
@@ -191,6 +202,10 @@ public class OperationsFactory implements HotRodConstants {
       return new SizeOperation(codec, transportFactory, cacheNameBytes, topologyId, flags());
    }
 
+   public ExecuteOperation newExecuteOperation(String taskName, Map<String, byte[]> marshalledParams) {
+		return new ExecuteOperation(codec, transportFactory, cacheNameBytes, topologyId, flags(), taskName, marshalledParams);
+	}
+
    private Flag[] flags() {
       List<Flag> flags = this.flagsMap.get();
       this.flagsMap.remove();
@@ -220,5 +235,21 @@ public class OperationsFactory implements HotRodConstants {
       for(Flag flag : flags)
          list.add(flag);
 
+   }
+
+   public CacheTopologyInfo getCacheTopologyInfo() {
+      return transportFactory.getCacheTopologyInfo(cacheNameBytes);
+   }
+
+   public IterationStartOperation newIterationStartOperation(String filterConverterFactory, Set<Integer> segments, int batchSize) {
+      return new IterationStartOperation(codec, flags(), cacheNameBytes, topologyId, filterConverterFactory, segments, batchSize, transportFactory);
+   }
+
+   public IterationEndOperation newIterationEndOperation(String iterationId, Transport transport) {
+      return new IterationEndOperation(codec, flags(), cacheNameBytes, topologyId, iterationId, transportFactory, transport);
+   }
+
+   public IterationNextOperation newIterationNextOperation(String iterationId, Transport transport) {
+      return new IterationNextOperation(codec, flags(), cacheNameBytes, topologyId, iterationId, transport);
    }
 }

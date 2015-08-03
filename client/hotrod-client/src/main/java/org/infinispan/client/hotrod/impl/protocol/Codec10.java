@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -45,6 +46,20 @@ public class Codec10 implements Codec {
    public void writeClientListenerParams(Transport transport, ClientListener clientListener,
          byte[][] filterFactoryParams, byte[][] converterFactoryParams) {
       // No-op
+   }
+
+   @Override
+   public void writeExpirationParams(Transport transport, long lifespan, TimeUnit lifespanTimeUnit, long maxIdle, TimeUnit maxIdleTimeUnit) {
+      if (!CodecUtils.isIntCompatible(lifespan)) {
+         log.warn("Lifespan value greater than the max supported size (Integer.MAX_VALUE), this can cause precision loss");
+      }
+      if (!CodecUtils.isIntCompatible(maxIdle)) {
+         log.warn("MaxIdle value greater than the max supported size (Integer.MAX_VALUE), this can cause precision loss");
+      }
+      int lifespanSeconds = CodecUtils.toSeconds(lifespan, lifespanTimeUnit);
+      int maxIdleSeconds = CodecUtils.toSeconds(maxIdle, maxIdleTimeUnit);
+      transport.writeVInt(lifespanSeconds);
+      transport.writeVInt(maxIdleSeconds);
    }
 
    protected HeaderParams writeHeader(
@@ -227,7 +242,7 @@ public class Codec10 implements Codec {
          localLog.newTopology(transport.getRemoteSocketAddress(), newTopologyId,
                socketAddresses.size(), socketAddresses);
       }
-      transport.getTransportFactory().updateServers(socketAddresses, cacheName);
+      transport.getTransportFactory().updateServers(socketAddresses, cacheName, false);
       if (hashFunctionVersion == 0) {
          localLog.trace("Not using a consistent hash function (hash function version == 0).");
       } else {

@@ -97,6 +97,72 @@ Set keys = remoteCache.keySet();
 
 ----
 
+Alternatively, if memory is a concern, use the remote iterator api to retrieve entries from the server:
+
+[source,java]
+----
+// Retrieve all entries in batches of 1000
+int batchSize = 1000;
+try (CloseableIterator<Entry<Object, Object>> iterator = remoteCache.retrieveEntries(null, batchSize)) {
+     while(iterator.hasNext()) {
+        // Do something
+     }
+}
+
+// Filter by segment
+Set<Integer> segments = ...
+try (CloseableIterator<Entry<Object, Object>> iterator = remoteCache.retrieveEntries(null, segments, batchSize)) {
+     while(iterator.hasNext()) {
+        // Do something
+     }
+}
+
+// Filter by custom filter
+try (CloseableIterator<Entry<Object, Object>> iterator = remoteCache.retrieveEntries("myFilterConverterFactory", segments, batchSize)) {
+     while(iterator.hasNext()) {
+        // Do something
+     }
+}
+----
+
+
+In order to use custom filters, it's necessary to deploy them first in the server. Follow the steps:
+
+* Create a factory for the filter extending link:http://docs.jboss.org/infinispan/{infinispanversion}/apidocs/org/infinispan/filter/KeyValueFilterConverterFactory.html[KeyValueFilterConverterFactory], annotated with @NamedFactory containing the name of the factory, example:
+
+[source,java]
+----
+
+import java.io.Serializable;
+
+import org.infinispan.filter.AbstractKeyValueFilterConverter;
+import org.infinispan.filter.KeyValueFilterConverter;
+import org.infinispan.filter.KeyValueFilterConverterFactory;
+import org.infinispan.filter.NamedFactory;
+import org.infinispan.metadata.Metadata;
+
+@NamedFactory(name = "myFilterConverterFactory")
+public class MyKeyValueFilterConverterFactory implements KeyValueFilterConverterFactory {
+
+   @Override
+   public KeyValueFilterConverter<String, SampleEntity1, SampleEntity2> getFilterConverter() {
+      return new MyKeyValueFilterConverter();
+   }
+   // Filter implementation. Should be serializable or externalizable for DIST caches
+   static class MyKeyValueFilterConverter extends AbstractKeyValueFilterConverter<String, SampleEntity1, SampleEntity2> implements Serializable {
+      @Override
+      public SampleEntity2 filterAndConvert(String key, SampleEntity1 entity, Metadata metadata) {
+         // returning null will case the entry to be filtered out
+         // return SampleEntity2 will convert from the cache type SampleEntity1
+      }
+   }
+}
+----
+
+* Create a jar with a `META-INF/services/org.infinispan.filter.KeyValueFilterConverterFactory` file and within it, write the fully qualified class name of the filter factory class implementation.
+* Optional: If the filter uses custom key/value classes, these must be included in the JAR so that the filter can correctly unmarshall key and/or value instances.
+* Deploy the JAR file in the Infinispan Server.
+
 ===== Versioned API
 A RemoteCacheManager provides instances of link:http://docs.jboss.org/infinispan/{infinispanversion}/apidocs/org/infinispan/client/hotrod/RemoteCache.html[RemoteCache] interface that represents a handle to the named or default cache on the remote cluster. API wise, it extends the link:http://docs.jboss.org/infinispan/{infinispanversion}/apidocs/org/infinispan/Cache.html[Cache] interface to which it also adds some new methods, including the so called versioned API. Please find below some examples of this API <<sid-68355052, but to understand the motivation behind it, make sure you read this section>>.
 
@@ -218,7 +284,7 @@ needs to be created that produces filter instances:
 [source,java]
 ----
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilterFactory;
-import org.infinispan.notifications.cachelistener.filter.NamedFactory;
+import org.infinispan.filter.NamedFactory;
 
 @NamedFactory(name = "static-filter")
 class StaticCacheEventFilterFactory implements CacheEventFilterFactory {
@@ -232,7 +298,8 @@ class StaticCacheEventFilterFactory implements CacheEventFilterFactory {
 // needed when running in a cluster
 class StaticCacheEventFilter implements CacheEventFilter<Integer, String>, Serializable {
    @Override
-   public boolean accept(Integer key, String value, Metadata metadata, String oldValue, Metadata oldMetadata, EventType eventType) {
+   public boolean accept(Integer key, String oldValue, Metadata oldMetadata,
+         String newValue, Metadata newMetadata, EventType eventType) {
       if (key.equals(1)) // static key
          return true;
 
@@ -250,10 +317,15 @@ plugged with the name and the cache event filter factory instance. Plugging the
 Infinispan Server with a custom filter involves the following steps:
 
 1. Create a JAR file with the filter implementation within it.
-2. Create a `META-INF/services/org.infinispan.notifications.filter.CacheEventFilterFactory` file
+2. Optional: If the cache uses custom key/value classes, these must be
+included in the JAR so that the callbacks can be executed with the correctly
+unmarshalled key and/or value instances. If the client listener has `useRawData`
+enabled, this is not necessary since the callback key/value instances will be
+provided in binary format.
+3. Create a `META-INF/services/org.infinispan.notifications.cachelistener.filter.CacheEventFilterFactory` file
 within the JAR file and within it, write the fully qualified class name of the
 filter class implementation.
-3. Deploy the JAR file in the Infinispan Server.
+4. Deploy the JAR file in the Infinispan Server.
 
 On top of that, the client listener needs to be linked with this cache event
 filter factory by adding the factory's name to the @ClientListener annotation:
@@ -298,7 +370,8 @@ class DynamicCacheEventFilter implements CacheEventFilter<Integer, String>, Seri
    }
 
    @Override
-   public boolean accept(Integer key, String value, Metadata metadata, String oldValue, Metadata oldMetadata, EventType eventType) {
+   public boolean accept(Integer key, String oldValue, Metadata oldMetadata,
+         String newValue, Metadata newMetadata, EventType eventType) {
       if (key.equals(params[0])) // dynamic key
          return true;
 
@@ -335,10 +408,10 @@ instances generated by a `CacheEventConverterFactory`:
 ----
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverterFactory;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
-import org.infinispan.notifications.cachelistener.filter.NamedFactory;
+import org.infinispan.filter.NamedFactory;
 
 @NamedFactory(name = "static-converter")
-class StaticConverterFactory implements ConverterFactory {
+class StaticConverterFactory implements CacheEventConverterFactory {
    final CacheEventConverter<Integer, String, CustomEvent> staticConverter = new StaticCacheEventConverter();
    public CacheEventConverter<Integer, String, CustomEvent> getConverter(final Object[] params) {
       return staticConverter;
@@ -348,8 +421,8 @@ class StaticConverterFactory implements ConverterFactory {
 // Serializable, Externalizable or marshallable with Infinispan Externalizers
 // needed when running in a cluster
 class StaticCacheEventConverter implements CacheEventConverter<Integer, String, CustomEvent>, Serializable {
-   public CustomEvent convert(Integer key, String value, Metadata metadata, String prevValue, Metadata prevMetadata, EventType eventType) {
-      return new CustomEvent(key, value);
+   public CustomEvent convert(Integer key, String oldValue, Metadata oldMetadata, String newValue, Metadata newMetadata, EventType eventType) {
+      return new CustomEvent(key, newValue);
    }
 }
 
@@ -408,10 +481,15 @@ plugged with the name and the cache event converter factory instance. Plugging t
 Infinispan Server with an event converter involves the following steps:
 
 1. Create a JAR file with the converter implementation within it.
-2. Create a `META-INF/services/org.infinispan.notifications.cachelistener.filter.CacheEventConverterFactory` file
+2. Optional: If the cache uses custom key/value classes, these must be
+included in the JAR so that the callbacks can be executed with the correctly
+unmarshalled key and/or value instances. If the client listener has `useRawData`
+enabled, this is not necessary since the callback key/value instances will be
+provided in binary format.
+3. Create a `META-INF/services/org.infinispan.notifications.cachelistener.filter.CacheEventConverterFactory` file
 within the JAR file and within it, write the fully qualified class name of the
 converter class implementation.
-3. Deploy the JAR file in the Infinispan Server.
+4. Deploy the JAR file in the Infinispan Server.
 
 On top of that, the client listener needs to be linked with this converter
 factory by adding the factory's name to the @ClientListener annotation:
@@ -439,6 +517,7 @@ by the converter factories to enable this option. For example:
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverterFactory;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
 
+@NamedFactory(name = "dynamic-converter")
 class DynamicCacheEventConverterFactory implements CacheEventConverterFactory {
    public CacheEventConverter<Integer, String, CustomEvent> getConverter(final Object[] params) {
       return new DynamicCacheEventConverter(params);
@@ -453,12 +532,13 @@ class DynamicCacheEventConverter implements CacheEventConverter<Integer, String,
       this.params = params;
    }
 
-   public CustomEvent convert(Integer key, String value, Metadata metadata, String prevValue, Metadata prevMetadata, EventType eventType) {
+   public CustomEvent convert(Integer key, String oldValue, Metadata oldMetadata,
+         String newValue, Metadata newMetadata, EventType eventType) {
       // If the key matches a key given via parameter, only send the key information
       if (params[0].equals(key))
          return new CustomEvent(key, null);
 
-      return new CustomEvent(key, value);
+      return new CustomEvent(key, newValue);
    }
 }
 ----
@@ -477,6 +557,85 @@ cluster, so that the conversion can happen right where the event is generated,
 even if the even is generated in a different node to where the listener is
 registered. To make them marshallable, either make them extend `Serializable`,
 `Externalizable`, or provide a custom `Externalizer` for them.
+
+====== Filtering and Customizing Client Events
+
+If you want to do both event filtering and customization, it's easier to
+implement `org.infinispan.notifications.cachelistener.filter.CacheEventFilterConverter`
+which allows both filter and customization to happen in a single step.
+For convenience, it's recommended to extend
+`org.infinispan.notifications.cachelistener.filter.AbstractCacheEventFilterConverter`
+instead of implementing `org.infinispan.notifications.cachelistener.filter.CacheEventFilterConverter`
+directly. For example:
+
+[source,java]
+----
+import org.infinispan.notifications.cachelistener.filter.CacheEventConverterFactory;
+import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
+
+@NamedFactory(name = "dynamic-filter-converter")
+class DynamicCacheEventFilterConverterFactory implements CacheEventFilterConverterFactory {
+   public CacheEventFilterConverter<Integer, String, CustomEvent> getFilterConverter(final Object[] params) {
+      return new DynamicCacheEventFilterConverter(params);
+   }
+}
+
+// Serializable, Externalizable or marshallable with Infinispan Externalizers needed when running in a cluster
+//
+class DynamicCacheEventFilterConverter extends AbstractCacheEventFilterConverter<Integer, String, CustomEvent>, Serializable {
+   final Object[] params;
+
+   DynamicCacheEventFilterConverter(Object[] params) {
+      this.params = params;
+   }
+
+   public CustomEvent filterAndConvert(Integer key, String oldValue, Metadata oldMetadata,
+         String newValue, Metadata newMetadata, EventType eventType) {
+      // If the key matches a key given via parameter, only send the key information
+      if (params[0].equals(key))
+         return new CustomEvent(key, null);
+
+      return new CustomEvent(key, newValue);
+   }
+}
+----
+
+Similar to filters and converters, to be able to register a listener with this
+combined filter/converter factory, the factory has to be given a unique name via the
+`@NamedFactory` annotation, and the Hot Rod server needs to be plugged with the
+name and the cache event converter factory instance. Plugging the Infinispan
+Server with an event converter involves the following steps:
+
+1. Create a JAR file with the converter implementation within it.
+2. Optional: If the cache uses custom key/value classes, these must be
+included in the JAR so that the callbacks can be executed with the correctly
+unmarshalled key and/or value instances. If the client listener has `useRawData`
+enabled, this is not necessary since the callback key/value instances will be
+provided in binary format.
+3. Create a `META-INF/services/org.infinispan.notifications.cachelistener.filter.CacheEventFilterConverterFactory` file
+within the JAR file and within it, write the fully qualified class name of the
+converter class implementation.
+4. Deploy the JAR file in the Infinispan Server.
+
+From a client perspective, to be able to use the combined filter and
+converter class, the client listener must define the same filter factory and
+converter factory names, e.g.:
+
+[source,java]
+----
+@ClientListener(filterFactoryName = "dynamic-filter-converter", converterFactoryName = "dynamic-filter-converter")
+public class CustomEventPrintListener { ... }
+----
+
+The dynamic parameters required in the example above are provided when the
+listener is registered via either filter or converter parameters. If filter
+parameters are non-empty, those are used, otherwise, the converter parameters:
+
+[source,java]
+----
+RemoteCache<?, ?> cache = ...
+cache.addClientListener(new CustomEventPrintListener(), new Object[]{1}, null);
+----
 
 ====== Event Marshalling
 
@@ -570,25 +729,22 @@ data. Enabling near caching can significantly improve the performance of read
 operations `get` and `getVersioned` since data can potentially be located
 locally within the Hot Rod client instead of having to go remote.
 
-To enable near caching, the user must decide how to configure the near cache
-to work, either `lazy` or `eager`.
+To enable near caching, the user must set the near cache mode to `INVALIDATED`.
+By doing that near cache is populated upon retrievals from the server via
+calls to `get` or `getVersioned` operations. When near cached entries are
+updated or removed server-side, the cached near cache entries are invalidated.
+If a key is requested after it's been invalidated, it'll have to be re-fetched
+from the server.
 
-* Lazy near caching: In lazy mode, near cache is only populated upon retrievals
-from the server via calls to `get` or `getVersioned` operations. When near
-cached entries are updated or removed server-side, the cached near cache
-entries are eliminated. The advantage of lazy mode is that it's the most
-lightweight mode, but the downside is that if a key is requested after it's
-been modified, it'll have to be re-fetched from the server.
+When near cache is enabled, its size must be configured by defining
+the maximum number of entries to keep in the near cache. When the maximum is
+reached, near cached entries are evicted using a least-recently-used (LRU)
+algorithm. If providing 0 or a negative value, it is assumed that the near
+cache is unbounded.
 
-* Eager near caching: In eager mode, the near cache is populated when
-`get`/`getVersioned` are called, and when new entries are created server side,
-and when entries are modified. The advantage of eager caching is that the near
-cache is eagerly updated without the need to call `get`/`getVersioned`
-operations. On top of that, when an entry is modified, the new value is
-directly sent to the client so that if a `get`/`getVersioned` operation is
-executed, the value is directly fetched from the near cache. The downside of
-eager mode is that it's a more heavyweight mode and hence takes up more
-resources in terms of bandwith.
+WARNING: Users should be careful when configuring near cache to be
+unbounded since it shifts the responsibility to keep the near cache's size
+within the boundaries of the client JVM to the user.
 
 The Hot Rod client's near cache mode is configured using the `NearCacheMode`
 enumeration and calling:
@@ -599,28 +755,13 @@ import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
 import org.infinispan.client.hotrod.configuration.NearCacheMode;
 ...
 
-// For lazy near caches
-ConfigurationBuilder lazy = new ConfigurationBuilder();
-lazy.nearCache().mode(NearCacheMode.LAZY);
+// Unbounded invalidated near cache
+ConfigurationBuilder unbounded = new ConfigurationBuilder();
+unbounded.nearCache().mode(NearCacheMode.INVALIDATED).maxEntries(-1);
 
-// For eager near caches
-ConfigurationBuilder eager = new ConfigurationBuilder();
-eager.nearCache().mode(NearCacheMode.EAGER);
-----
-
-By default near cache size is unbounded but this can be changed to set a
-maximum size in terms of number of entries for the near cache. When the
-maximum is reached, near cached entries are evicted using a least-recently-used
-(LRU) algorithm. Near cache's maximum size can be configured like this:
-
-[source,java]
-----
-import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
-...
-
-// Sets 100 as the maximum number of entries to keep in the near cache
-ConfigurationBuilder builder = new ConfigurationBuilder();
-builder.nearCache().maxEntries(100);
+// Bounded invalidated near cache
+ConfigurationBuilder bounded = new ConfigurationBuilder();
+bounded.nearCache().mode(NearCacheMode.INVALIDATED).maxEntries(100);
 ----
 
 NOTE: Near caches work the same way for local caches as they do for clustered

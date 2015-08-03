@@ -56,7 +56,11 @@ import static org.testng.AssertJUnit.*;
 @Test(groups = {"functional", "smoke"}, testName = "iteration.DistributedEntryRetrieverTest")
 public class DistributedEntryRetrieverTest extends BaseClusteredEntryRetrieverTest {
    public DistributedEntryRetrieverTest() {
-      super(false, CacheMode.DIST_SYNC);
+      this(false);
+   }
+
+   public DistributedEntryRetrieverTest(boolean tx) {
+      super(tx, CacheMode.DIST_SYNC);
       // This is needed since we kill nodes
       cleanup = CleanupPhase.AFTER_METHOD;
    }
@@ -136,7 +140,7 @@ public class DistributedEntryRetrieverTest extends BaseClusteredEntryRetrieverTe
       Future<Void> future = fork(new Callable<Void>() {
          @Override
          public Void call() throws Exception {
-            Iterator<CacheEntry<Object, String>> iter = retriever.retrieveEntries(null, null, null, null);
+            Iterator<CacheEntry<Object, String>> iter = retriever.retrieveEntries(new NoOpFilterConverterWithDependencies<Object, String>(), null, null, null);
             while (iter.hasNext()) {
                Map.Entry<Object, String> entry = iter.next();
                returnQueue.add(entry);

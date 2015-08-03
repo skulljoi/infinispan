@@ -7,8 +7,10 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLContext;
 
+import org.infinispan.client.hotrod.CacheTopologyInfo;
 import org.infinispan.client.hotrod.configuration.Configuration;
 import org.infinispan.client.hotrod.event.ClientListenerNotifier;
+import org.infinispan.client.hotrod.impl.consistenthash.ConsistentHash;
 import org.infinispan.client.hotrod.impl.consistenthash.ConsistentHashFactory;
 import org.infinispan.client.hotrod.impl.protocol.Codec;
 
@@ -28,9 +30,11 @@ public interface TransportFactory {
 
    void start(Codec codec, Configuration configuration, AtomicInteger topologyId, ClientListenerNotifier listenerNotifier);
 
-   void updateServers(Collection<SocketAddress> newServers, byte[] cacheName);
+   void updateServers(Collection<SocketAddress> newServers, byte[] cacheName, boolean quiet);
 
    void destroy();
+
+   CacheTopologyInfo getCacheTopologyInfo(byte[] cacheName);
 
    /**
     * @deprecated Only called for Hot Rod 1.x protocol.
@@ -39,6 +43,8 @@ public interface TransportFactory {
    void updateHashFunction(Map<SocketAddress, Set<Integer>> servers2Hash, int numKeyOwners, short hashFunctionVersion, int hashSpace, byte[] cacheName);
 
    void updateHashFunction(SocketAddress[][] segmentOwners, int numSegments, short hashFunctionVersion, byte[] cacheName);
+
+   ConsistentHash getConsistentHash(byte[] cacheName);
 
    ConsistentHashFactory getConsistentHashFactory();
 
@@ -57,4 +63,6 @@ public interface TransportFactory {
    void invalidateTransport(SocketAddress serverAddress, Transport transport);
 
    SSLContext getSSLContext();
+
+   void reset(byte[] cacheName);
 }

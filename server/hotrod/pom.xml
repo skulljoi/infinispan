@@ -4,7 +4,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-server-parent</artifactId>
-      <version>7.1.1-SNAPSHOT</version>
+      <version>8.0.0-SNAPSHOT</version>
       <relativePath>../pom.xml</relativePath>
    </parent>
 
@@ -12,6 +12,10 @@
    <packaging>bundle</packaging>
    <name>Infinispan Hot Rod Server</name>
    <description>Infinispan Hot Rod Server</description>
+
+   <properties>
+         <module.skipComponentMetaDataProcessing>false</module.skipComponentMetaDataProcessing>
+   </properties>
 
    <dependencies>
        <dependency>
@@ -31,6 +35,11 @@
       <dependency>
          <groupId>${project.groupId}</groupId>
          <artifactId>infinispan-remote-query-server</artifactId>
+         <optional>true</optional>
+      </dependency>
+      <dependency>
+         <groupId>${project.groupId}</groupId>
+         <artifactId>infinispan-scripting</artifactId>
          <optional>true</optional>
       </dependency>
       <dependency>

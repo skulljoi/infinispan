@@ -31,7 +31,7 @@ import static org.testng.AssertJUnit.*;
  * @author Galder Zamarreño
  * @since 5.3
  */
-@Test(groups = "functional", testName = "it.compatibility.CompatibilityTest")
+@Test(groups = "functional", testName = "it.compatibility.EmbeddedHotRodTest")
 public class EmbeddedHotRodTest extends AbstractInfinispanTest {
 
    CompatibilityCacheFactory<Integer, String> cacheFactory;
@@ -40,7 +40,7 @@ public class EmbeddedHotRodTest extends AbstractInfinispanTest {
    protected void setup() throws Exception {
       cacheFactory = new CompatibilityCacheFactory<Integer, String>(CacheMode.LOCAL).setup();
       HotRodServer hotrod = cacheFactory.getHotrodServer();
-      hotrod.addCacheEventFilterFactory("static-filter-factory", new StaticCacheEventFilterFactory());
+      hotrod.addCacheEventFilterFactory("static-filter-factory", new StaticCacheEventFilterFactory(2));
       hotrod.addCacheEventFilterFactory("dynamic-filter-factory", new DynamicCacheEventFilterFactory());
       hotrod.addCacheEventConverterFactory("static-converter-factory", new StaticConverterFactory());
       hotrod.addCacheEventConverterFactory("dynamic-converter-factory", new DynamicConverterFactory());
@@ -357,13 +357,13 @@ public class EmbeddedHotRodTest extends AbstractInfinispanTest {
          eventListener.expectNoEvents();
          remote.put(1, "one");
          assertEquals("one", embedded.get(1));
-         eventListener.expectOnlyCreatedCustomEvent(new CustomEvent(1, "one"));
+         eventListener.expectCreatedEvent(new CustomEvent(1, "one", 0));
          remote.put(1, "new-one");
          assertEquals("new-one", embedded.get(1));
-         eventListener.expectOnlyModifiedCustomEvent(new CustomEvent(1, "new-one"));
+         eventListener.expectModifiedEvent(new CustomEvent(1, "new-one", 0));
          remote.remove(1);
          assertNull(embedded.get(1));
-         eventListener.expectOnlyRemovedCustomEvent(new CustomEvent(1, null));
+         eventListener.expectRemovedEvent(new CustomEvent(1, null, 0));
       } finally {
          remote.removeClientListener(eventListener);
       }
@@ -378,16 +378,16 @@ public class EmbeddedHotRodTest extends AbstractInfinispanTest {
          eventListener.expectNoEvents();
          remote.put(1, "one");
          assertEquals("one", embedded.get(1));
-         eventListener.expectOnlyCreatedCustomEvent(new CustomEvent(1, "one"));
+         eventListener.expectCreatedEvent(new CustomEvent(1, "one", 0));
          remote.put(2, "two");
          assertEquals("two", embedded.get(2));
-         eventListener.expectOnlyCreatedCustomEvent(new CustomEvent(2, null));
+         eventListener.expectCreatedEvent(new CustomEvent(2, null, 0));
          remote.remove(1);
          assertNull(embedded.get(1));
-         eventListener.expectOnlyRemovedCustomEvent(new CustomEvent(1, null));
+         eventListener.expectRemovedEvent(new CustomEvent(1, null, 0));
          remote.remove(2);
          assertNull(embedded.get(2));
-         eventListener.expectOnlyRemovedCustomEvent(new CustomEvent(2, null));
+         eventListener.expectRemovedEvent(new CustomEvent(2, null, 0));
       } finally {
          remote.removeClientListener(eventListener);
       }

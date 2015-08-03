@@ -18,6 +18,7 @@ import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.EntryFactory;
+import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.distribution.L1Manager;
@@ -107,17 +108,17 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
 
    @Override
    public final Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
-      return visitDataReadCommand(ctx, command);
+      return visitDataReadCommand(ctx, command, false);
    }
    @Override
    public final Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
-      return visitDataReadCommand(ctx, command);
+      return visitDataReadCommand(ctx, command, true);
    }
-   private Object visitDataReadCommand(InvocationContext ctx, AbstractDataCommand command) throws Throwable {
-      return performCommandWithL1WriteIfAble(ctx, command, false, true);
+   private Object visitDataReadCommand(InvocationContext ctx, AbstractDataCommand command, boolean isEntry) throws Throwable {
+      return performCommandWithL1WriteIfAble(ctx, command, isEntry, false, true);
    }
 
-   protected Object performCommandWithL1WriteIfAble(InvocationContext ctx, DataCommand command,
+   protected Object performCommandWithL1WriteIfAble(InvocationContext ctx, DataCommand command, boolean isEntry,
                                                 boolean shouldAlwaysRunNextInterceptor, boolean registerL1) throws Throwable {
       Object returnValue;
       if (ctx.isOriginLocal()) {
@@ -126,7 +127,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
          if (skipL1Lookup(command, key)) {
             returnValue = invokeNextInterceptor(ctx, command);
          } else {
-            returnValue = performL1Lookup(ctx, shouldAlwaysRunNextInterceptor, key, command);
+            returnValue = performL1Lookup(ctx, shouldAlwaysRunNextInterceptor, key, command, isEntry);
          }
       } else {
          // If this is a remote command, and we found a value in our cache
@@ -140,7 +141,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
    }
 
    protected Object performL1Lookup(InvocationContext ctx, boolean runInterceptorOnConflict, Object key,
-                                     DataCommand command) throws Throwable {
+                                     DataCommand command, boolean isEntry) throws Throwable {
       // Most times the putIfAbsent will be successful, so not doing a get first
       L1WriteSynchronizer l1WriteSync = new L1WriteSynchronizer(dataContainer, l1Lifespan, stateTransferLock,
                                                                 cdl);
@@ -182,6 +183,8 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
                // interceptors
                if (runInterceptorOnConflict) {
                   returnValue = invokeNextInterceptor(ctx, command);
+               } else if (!isEntry && returnValue instanceof InternalCacheEntry) {
+                  returnValue = ((InternalCacheEntry)returnValue).getValue();
                }
             } catch (TimeoutException e) {
                // This should never be required since the status is always set in a try catch above - but IBM doesn't...
@@ -220,7 +223,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
 
    @Override
    public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
-      Future<Object> invalidationFuture = null;
+      Future<?> invalidationFuture = null;
       Set<Object> keys = command.getMap().keySet();
       Set<Object> toInvalidate = new HashSet<Object>(keys.size());
       for (Object k : keys) {
@@ -293,7 +296,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
          }
          return invokeNextInterceptor(ctx, command);
       }
-      Future<Object> l1InvalidationFuture = invalidateL1(ctx, command, assumeOriginKeptEntryInL1);
+      Future<?> l1InvalidationFuture = invalidateL1(ctx, command, assumeOriginKeptEntryInL1);
       Object returnValue = invokeNextInterceptor(ctx, command);
       processInvalidationResult(ctx, command, l1InvalidationFuture);
       removeFromLocalL1(ctx, command);
@@ -320,7 +323,7 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
       invokeNextInterceptor(ctx, command);
    }
 
-   private void processInvalidationResult(InvocationContext ctx, FlagAffectedCommand command, Future<Object> l1InvalidationFuture) throws InterruptedException, ExecutionException {
+   private void processInvalidationResult(InvocationContext ctx, FlagAffectedCommand command, Future<?> l1InvalidationFuture) throws InterruptedException, ExecutionException {
       if (l1InvalidationFuture != null) {
          if (isSynchronous(command)) {
             l1InvalidationFuture.get();
@@ -328,8 +331,8 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
       }
    }
 
-   private Future<Object> invalidateL1(InvocationContext ctx, DataWriteCommand command, boolean assumeOriginKeptEntryInL1) {
-      Future<Object> l1InvalidationFuture = null;
+   private Future<?> invalidateL1(InvocationContext ctx, DataWriteCommand command, boolean assumeOriginKeptEntryInL1) {
+      Future<?> l1InvalidationFuture = null;
       if (cdl.localNodeIsOwner(command.getKey())) {
          l1InvalidationFuture = l1Manager.flushCache(Collections.singletonList(command.getKey()), ctx.getOrigin(), assumeOriginKeptEntryInL1);
       } else if (trace) {

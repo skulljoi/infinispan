@@ -11,6 +11,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
@@ -24,17 +25,19 @@ import java.util.concurrent.TimeoutException;
  */
 public final class LazyInitializingBlockingTaskAwareExecutorService implements BlockingTaskAwareExecutorService {
 
-   private final ThreadPoolExecutorFactory executorFactory;
+   private final ThreadPoolExecutorFactory<ExecutorService> executorFactory;
    private final ThreadFactory threadFactory;
    private final TimeService timeService;
+   private final String controllerThreadName;
    private volatile BlockingTaskAwareExecutorService delegate;
 
-   public LazyInitializingBlockingTaskAwareExecutorService(
-         ThreadPoolExecutorFactory executorFactory, ThreadFactory threadFactory,
-         TimeService timeService) {
+   public LazyInitializingBlockingTaskAwareExecutorService(ThreadPoolExecutorFactory<ExecutorService> executorFactory,
+                                                           ThreadFactory threadFactory,
+                                                           TimeService timeService, String controllerThreadName) {
       this.executorFactory = executorFactory;
       this.threadFactory = threadFactory;
       this.timeService = timeService;
+      this.controllerThreadName = controllerThreadName;
    }
 
    @Override
@@ -133,8 +136,9 @@ public final class LazyInitializingBlockingTaskAwareExecutorService implements B
       if (delegate == null) {
          synchronized (this) {
             if (delegate == null) {
-               delegate = new BlockingTaskAwareExecutorServiceImpl(
-                     executorFactory.createExecutor(threadFactory), timeService);
+               delegate = new BlockingTaskAwareExecutorServiceImpl(controllerThreadName ,
+                                                                   executorFactory.createExecutor(threadFactory),
+                                                                   timeService);
             }
          }
       }

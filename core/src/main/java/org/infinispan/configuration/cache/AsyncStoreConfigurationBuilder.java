@@ -1,8 +1,11 @@
 package org.infinispan.configuration.cache;
 
+import static org.infinispan.configuration.cache.AsyncStoreConfiguration.*;
+
 import java.util.concurrent.TimeUnit;
 
 import org.infinispan.commons.configuration.Builder;
+import org.infinispan.commons.configuration.attributes.AttributeSet;
 import org.infinispan.configuration.global.GlobalConfiguration;
 
 /**
@@ -13,50 +16,45 @@ import org.infinispan.configuration.global.GlobalConfiguration;
  *
  */
 public class AsyncStoreConfigurationBuilder<S> extends AbstractStoreConfigurationChildBuilder<S> implements Builder<AsyncStoreConfiguration> {
-
-   private boolean enabled = false;
-   private long flushLockTimeout = 1;
-   private int modificationQueueSize = 1024;
-   private long shutdownTimeout = TimeUnit.SECONDS.toMillis(25);
-   private int threadPoolSize = 1;
+   private final AttributeSet attributes;
 
    AsyncStoreConfigurationBuilder(AbstractStoreConfigurationBuilder<? extends AbstractStoreConfiguration, ?> builder) {
       super(builder);
+      this.attributes = AsyncStoreConfiguration.attributeDefinitionSet();
    }
 
    /**
     * If true, all modifications to this cache store happen asynchronously, on a separate thread.
     */
    public AsyncStoreConfigurationBuilder<S> enable() {
-      this.enabled = true;
+      attributes.attribute(ENABLED).set(true);
       return this;
    }
 
    public AsyncStoreConfigurationBuilder<S> disable() {
-      this.enabled = false;
+      attributes.attribute(ENABLED).set(false);
       return this;
    }
 
    public AsyncStoreConfigurationBuilder<S> enabled(boolean enabled) {
-      this.enabled = enabled;
+      attributes.attribute(ENABLED).set(enabled);
       return this;
    }
 
    /**
-    * Timeout to acquire the lock which guards the state to be flushed to the cache store
-    * periodically. The timeout can be adjusted for a running cache.
+    * Unused.
     */
+   @Deprecated
    public AsyncStoreConfigurationBuilder<S> flushLockTimeout(long l) {
-      this.flushLockTimeout = l;
       return this;
    }
 
    /**
-    * Timeout to acquire the lock which guards the state to be flushed to the cache store
-    * periodically. The timeout can be adjusted for a running cache.
+    * Unused.
     */
+   @Deprecated
    public AsyncStoreConfigurationBuilder<S> flushLockTimeout(long l, TimeUnit unit) {
-      return flushLockTimeout(unit.toMillis(l));
+      return this;
    }
 
    /**
@@ -66,34 +64,31 @@ public class AsyncStoreConfigurationBuilder<S> extends AbstractStoreConfiguratio
     * elements.
     */
    public AsyncStoreConfigurationBuilder<S> modificationQueueSize(int i) {
-      this.modificationQueueSize = i;
+      attributes.attribute(MODIFICATION_QUEUE_SIZE).set(i);
       return this;
    }
 
    /**
-    * Timeout to stop the cache store. When the store is stopped it's possible that some
-    * modifications still need to be applied; you likely want to set a very large timeout to make
-    * sure to not loose data
+    * Unused.
     */
+   @Deprecated
    public AsyncStoreConfigurationBuilder<S> shutdownTimeout(long l) {
-      this.shutdownTimeout = l;
       return this;
    }
 
    /**
-    * Timeout to stop the cache store. When the store is stopped it's possible that some
-    * modifications still need to be applied; you likely want to set a very large timeout to make
-    * sure to not loose data
+    * Unused.
     */
+   @Deprecated
    public AsyncStoreConfigurationBuilder<S> shutdownTimeout(long l, TimeUnit unit) {
-      return shutdownTimeout(unit.toMillis(l));
+      return this;
    }
 
    /**
     * Size of the thread pool whose threads are responsible for applying the modifications.
     */
    public AsyncStoreConfigurationBuilder<S> threadPoolSize(int i) {
-      this.threadPoolSize = i;
+      attributes.attribute(THREAD_POOL_SIZE).set(i);
       return this;
    }
 
@@ -108,28 +103,17 @@ public class AsyncStoreConfigurationBuilder<S> extends AbstractStoreConfiguratio
 
    @Override
    public AsyncStoreConfiguration create() {
-      return new AsyncStoreConfiguration(enabled, flushLockTimeout, modificationQueueSize, shutdownTimeout, threadPoolSize);
+      return new AsyncStoreConfiguration(attributes.protect());
    }
 
    @Override
    public AsyncStoreConfigurationBuilder<S> read(AsyncStoreConfiguration template) {
-      this.enabled = template.enabled();
-      this.flushLockTimeout = template.flushLockTimeout();
-      this.modificationQueueSize = template.modificationQueueSize();
-      this.shutdownTimeout = template.shutdownTimeout();
-      this.threadPoolSize = template.threadPoolSize();
-
+      this.attributes.read(template.attributes());
       return this;
    }
 
    @Override
    public String toString() {
-      return "AsyncLoaderConfigurationBuilder{" +
-            "enabled=" + enabled +
-            ", flushLockTimeout=" + flushLockTimeout +
-            ", modificationQueueSize=" + modificationQueueSize +
-            ", shutdownTimeout=" + shutdownTimeout +
-            ", threadPoolSize=" + threadPoolSize +
-            '}';
+      return "AsyncStoreConfigurationBuilder [attributes=" + attributes + "]";
    }
 }

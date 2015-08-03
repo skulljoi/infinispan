@@ -27,6 +27,7 @@ import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -42,7 +43,10 @@ public class KeyAffinityServiceImpl<K> implements KeyAffinityService<K> {
 
    // TODO During state transfer, we should try to assign keys to a node only if they are owners in both CHs
    public final static float THRESHOLD = 0.5f;
-   
+
+   //interval between key/queue poll
+   private static final int POLL_INTERVAL_MILLIS = 50;
+
    private static final Log log = LogFactory.getLog(KeyAffinityServiceImpl.class);
 
    private final Set<Address> filter;
@@ -104,14 +108,6 @@ public class KeyAffinityServiceImpl<K> implements KeyAffinityService<K> {
          throw new NullPointerException("Null address not supported!");
 
       BlockingQueue<K> queue = null;
-      maxNumberInvariant.readLock().lock();
-      try {
-         queue = address2key.get(address);
-         if (queue == null)
-            throw new IllegalStateException("Address " + address + " is no longer in the cluster");
-      } finally {
-         maxNumberInvariant.readLock().unlock();
-      }
       try {
          K result = null;
          while (result == null && !keyGenWorker.isStopped()) {
@@ -119,6 +115,10 @@ public class KeyAffinityServiceImpl<K> implements KeyAffinityService<K> {
             // to obtain the write lock
             maxNumberInvariant.readLock().lock();
             try {
+               queue = address2key.get(address);
+               if (queue == null)
+                  throw new IllegalStateException("Address " + address + " is no longer in the cluster");
+
                // first try to take an element without waiting
                result = queue.poll();
                if (result == null) {
@@ -131,12 +131,23 @@ public class KeyAffinityServiceImpl<K> implements KeyAffinityService<K> {
             } finally {
                maxNumberInvariant.readLock().unlock();
             }
+
+            if (result == null) {
+               // Now wait for a new key. If there's a topology change, poll() will time out and we'll retry
+               // on the new queue.
+               try {
+                  result = queue.poll(POLL_INTERVAL_MILLIS, TimeUnit.MILLISECONDS);
+               } catch (InterruptedException e) {
+                  // Ignore and restore interruption status
+                  Thread.currentThread().interrupt();
+               }
+            }
          }
          existingKeyCount.decrementAndGet();
          log.tracef("Returning key %s for address %s", result, address);
          return result;
       } finally {
-         if (queue.size() < bufferSize * THRESHOLD + 1) {
+         if (queue != null && queue.size() < bufferSize * THRESHOLD + 1) {
             keyProducerStartLatch.open();
          }
       }

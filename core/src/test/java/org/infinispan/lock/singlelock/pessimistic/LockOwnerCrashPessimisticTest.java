@@ -41,7 +41,7 @@ public class LockOwnerCrashPessimisticTest extends AbstractLockOwnerCrashTest {
                cache(1).put(k, "v");
                transaction = (DummyTransaction) tm(1).getTransaction();
             } catch (Throwable e) {
-               e.printStackTrace();
+               log.errorf(e, "Error starting transaction for key %s", k);
             }
          }
       });
@@ -88,7 +88,7 @@ public class LockOwnerCrashPessimisticTest extends AbstractLockOwnerCrashTest {
                cache(1).put(k, "v");
                transaction = (DummyTransaction) tm(1).getTransaction();
             } catch (Throwable e) {
-               e.printStackTrace();
+               log.errorf(e, "Error starting transaction for key %s", k);
             }
          }
       });
@@ -147,7 +147,7 @@ public class LockOwnerCrashPessimisticTest extends AbstractLockOwnerCrashTest {
                   transaction.runPrepare();
                }
             } catch (Throwable e) {
-               e.printStackTrace();
+               log.errorf(e, "Error preparing transaction for key %s", k);
             }
          }
       });
@@ -191,7 +191,7 @@ public class LockOwnerCrashPessimisticTest extends AbstractLockOwnerCrashTest {
 
       tm(1).resume(transaction);
       if (!crashBeforePrepare) {
-         transaction.runCommitTx();
+         transaction.runCommit(false);
       } else {
          tm(1).commit();
       }

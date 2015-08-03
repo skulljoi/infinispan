@@ -232,7 +232,6 @@ public class DistSyncL1FuncTest extends BaseDistSyncL1Test {
       }
    }
 
-   @Test(groups = "unstable", description = "ISPN-4133")
    public void testNonOwnerRetrievesValueFromBackupOwnerWhileWrite() throws Exception {
       final Cache<Object, String>[] owners = getOwners(key, 2);
 
@@ -273,7 +272,7 @@ public class DistSyncL1FuncTest extends BaseDistSyncL1Test {
             public boolean isSatisfied() throws Exception {
                return !isInL1(nonOwnerCache, key);
             }
-         }, 5000, 250);
+         }, 5000, 50, TimeUnit.MILLISECONDS);
 
          // This should come back from the backup owner, since the primary owner is blocked
          assertEquals(firstValue, nonOwnerCache.get(key));

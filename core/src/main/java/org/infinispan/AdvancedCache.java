@@ -1,5 +1,13 @@
 package org.infinispan;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.transaction.TransactionManager;
+import javax.transaction.xa.XAResource;
+
 import org.infinispan.atomic.Delta;
 import org.infinispan.batch.BatchContainer;
 import org.infinispan.cache.impl.DecoratedCache;
@@ -11,6 +19,7 @@ import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContextContainer;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.eviction.EvictionManager;
+import org.infinispan.expiration.ExpirationManager;
 import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.filter.KeyValueFilter;
 import org.infinispan.interceptors.base.CommandInterceptor;
@@ -22,13 +31,6 @@ import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.security.AuthorizationManager;
 import org.infinispan.stats.Stats;
 import org.infinispan.util.concurrent.locks.LockManager;
-
-import javax.transaction.TransactionManager;
-import javax.transaction.xa.XAResource;
-
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
 
 /**
  * An advanced interface that exposes additional methods not available on {@link Cache}.
@@ -122,6 +124,11 @@ public interface AdvancedCache<K, V> extends Cache<K, V> {
     * @return the eviction manager - if one is configured - for this cache instance
     */
    EvictionManager getEvictionManager();
+
+   /**
+    * @return the expiration manager - if one is configured - for this cache instance
+    */
+   ExpirationManager<K, V> getExpirationManager();
 
    /**
     * @return the component registry for this cache instance
@@ -309,6 +316,17 @@ public interface AdvancedCache<K, V> extends Cache<K, V> {
    V put(K key, V value, Metadata metadata);
 
    /**
+    * An overloaded form of {@link #putAll(Map)}, which takes in an instance of
+    * {@link org.infinispan.metadata.Metadata} which can be used to provide metadata information for
+    * the entries being stored, such as lifespan, version of value...etc.
+    *
+    * @param map the values to store
+    * @param metadata information to store alongside the value(s)
+    * @since 7.2
+    */
+   void putAll(Map<? extends K, ? extends V> map, Metadata metadata);
+
+   /**
     * An overloaded form of {@link #replace(K, V)}, which takes in an
     * instance of {@link Metadata} which can be used to provide metadata
     * information for the entry being stored, such as lifespan, version
@@ -394,6 +412,31 @@ public interface AdvancedCache<K, V> extends Cache<K, V> {
    // That way, you could do comparison not only on the cache value, but also based on version...etc
 
    /**
+    * Gets a collection of entries, returning them as {@link Map} of the values
+    * associated with the set of keys requested.
+    * <p>
+    * If the cache is configured read-through, and a get for a key would
+    * return null because an entry is missing from the cache, the Cache's
+    * {@link CacheLoader} is called in an attempt to load the entry. If an
+    * entry cannot be loaded for a given key, the returned Map will contain null for
+    * value of the key.
+    * <p>
+    * Unlike other bulk methods if this invoked in an existing transaction all entries
+    * will be stored in the current transactional context
+    * <p>
+    * The returned {@link Map} will be a copy and updates to the map will not be reflected
+    * in the Cache and vice versa.  The keys and values themselves however may not be
+    * copies depending on if storeAsBinary is enabled and the value was retrieved from
+    * the local node.
+    *
+    * @param keys The keys whose associated values are to be returned.
+    * @return A map of entries that were found for the given keys. If an entry is not
+    *         found for a given key, it will not be in the returned map.
+    * @throws NullPointerException  if keys is null or if keys contains a null
+    */
+   Map<K, V> getAll(Set<?> keys);
+
+   /**
     * Retrieves a CacheEntry corresponding to a specific key.
     *
     * @param key the key whose associated cache entry is to be returned
@@ -402,7 +445,32 @@ public interface AdvancedCache<K, V> extends Cache<K, V> {
     *
     * @since 5.3
     */
-   CacheEntry<K, V> getCacheEntry(K key);
+   CacheEntry<K, V> getCacheEntry(Object key);
+
+   /**
+    * Gets a collection of entries from the {@link AdvancedCache}, returning them as
+    * {@link Map} of the cache entries associated with the set of keys requested.
+    * <p>
+    * If the cache is configured read-through, and a get for a key would
+    * return null because an entry is missing from the cache, the Cache's
+    * {@link CacheLoader} is called in an attempt to load the entry. If an
+    * entry cannot be loaded for a given key, the returned Map will contain null for
+    * value of the key.
+    * <p>
+    * Unlike other bulk methods if this invoked in an existing transaction all entries
+    * will be stored in the current transactional context
+    * <p>
+    * The returned {@link Map} will be a copy and updates to the map will not be reflected
+    * in the Cache and vice versa.  The keys and values themselves however may not be
+    * copies depending on if storeAsBinary is enabled and the value was retrieved from
+    * the local node.
+    *
+    * @param keys The keys whose associated values are to be returned.
+    * @return A map of entries that were found for the given keys. Keys not found
+    *         in the cache are present in the map with null values.
+    * @throws NullPointerException  if keys is null or if keys contains a null
+    */
+   Map<K, CacheEntry<K, V>> getAllCacheEntries(Set<?> keys);
 
    /**
     * Retrieve the entry iterable that can be used to iterate over the contents of this cache.  Note that every
@@ -425,6 +493,9 @@ public interface AdvancedCache<K, V> extends Cache<K, V> {
     * progressing further.</p>
     * @param filter The filter to use.  Note this is required and for distributed caches must be serializable.  Callbacks
     *               to the filter will never provide a key or value that will be null.
+    * @deprecated Please use {@link Collection#stream()} method on either {@link Cache#entrySet()},
+    * {@link Cache#keySet()} or {@link Cache#values()}.  The {@link org.infinispan.filter.CacheFilters} can be used to
+    * bridge between filter/converters and proper stream types
     */
    EntryIterable<K, V> filterEntries(KeyValueFilter<? super K, ? super V> filter);
 
@@ -470,4 +541,14 @@ public interface AdvancedCache<K, V> extends Cache<K, V> {
     * ({@link PartitionHandlingConfiguration#enabled()}.
     */
    void setAvailability(AvailabilityMode availabilityMode);
+
+   /**
+    * Identical to {@link Cache#entrySet()} but is typed to return CacheEntries instead of Entries.  Please see
+    * the other method for a description of its behaviors.
+    * <p>
+    * This method is needed since nested generics do not support covariance
+    * @see Cache#entrySet()
+    * @return the entry set containing all of the CacheEntries
+    */
+   CacheSet<CacheEntry<K, V>> cacheEntrySet();
 }

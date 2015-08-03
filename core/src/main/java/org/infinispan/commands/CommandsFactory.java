@@ -1,12 +1,9 @@
 package org.infinispan.commands;
 
-import org.infinispan.Cache;
-import org.infinispan.commands.read.EntryRetrievalCommand;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.iteration.impl.EntryRequestCommand;
 import org.infinispan.iteration.impl.EntryResponseCommand;
-import org.infinispan.iteration.impl.EntryRetriever;
 import org.infinispan.metadata.Metadata;
 import org.infinispan.atomic.Delta;
 import org.infinispan.commands.control.LockControlCommand;
@@ -14,12 +11,13 @@ import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.KeySetCommand;
 import org.infinispan.commands.read.MapCombineCommand;
 import org.infinispan.commands.read.ReduceCommand;
 import org.infinispan.commands.read.SizeCommand;
-import org.infinispan.commands.read.ValuesCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
+import org.infinispan.commands.remote.ClusteredGetAllCommand;
 import org.infinispan.commands.remote.MultipleRpcCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
 import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
@@ -44,6 +42,8 @@ import org.infinispan.statetransfer.StateChunk;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.stream.impl.StreamRequestCommand;
+import org.infinispan.stream.impl.StreamResponseCommand;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.xsite.SingleXSiteRpcCommand;
 import org.infinispan.xsite.XSiteAdminCommand;
@@ -144,10 +144,20 @@ public interface CommandsFactory {
    /**
     * Builds a GetCacheEntryCommand
     * @param key key to get
-    * @param flags Command flags provided by cache
+    * @param explicitFlags Command flags provided by cache
     * @return a GetCacheEntryCommand
     */
    GetCacheEntryCommand buildGetCacheEntryCommand(Object key, Set<Flag> explicitFlags);
+
+   /**
+    * Builds a GetAllCommand
+    * @param keys keys to get
+    * @param flags Command flags provided by cache
+    * @param returnEntries boolean indicating whether entire cache entries are
+    *                      returned, otherwise return just the value parts
+    * @return a GetKeyValueCommand
+    */
+   GetAllCommand buildGetAllCommand(Collection<?> keys, Set<Flag> flags, boolean returnEntries);
 
    /**
     * Builds a KeySetCommand
@@ -157,26 +167,11 @@ public interface CommandsFactory {
    KeySetCommand buildKeySetCommand(Set<Flag> flags);
 
    /**
-    * Builds a ValuesCommand
-    * @param flags Command flags provided by cache
-    * @return a ValuesCommand
-    */
-   ValuesCommand buildValuesCommand(Set<Flag> flags);
-
-   /**
     * Builds a EntrySetCommand
     * @param flags Command flags provided by cache
     * @return a EntrySetCommand
     */
    EntrySetCommand buildEntrySetCommand(Set<Flag> flags);
-
-   /**
-    * Builds a EntryRetrievalCommand
-    * @param flags Command flags provided by cache
-    * @param filter The filter used for the iteration process
-    * @return a EntryRetrievalCommand
-    */
-   EntryRetrievalCommand buildEntryRetrievalCommand(Set<Flag> flags, KeyValueFilter filter);
 
    /**
     * Builds a PutMapCommand
@@ -277,6 +272,13 @@ public interface CommandsFactory {
    ClusteredGetCommand buildClusteredGetCommand(Object key, Set<Flag> flags, boolean acquireRemoteLock, GlobalTransaction gtx);
 
    /**
+    * Builds a ClusteredGetAllCommand, which is a remote lookup command
+    * @param keys key to look up
+    * @return a ClusteredGetAllCommand
+    */
+   ClusteredGetAllCommand buildClusteredGetAllCommand(List<?> keys, Set<Flag> flags, GlobalTransaction gtx);
+
+   /**
     * Builds a LockControlCommand to control explicit remote locking
     *
     *
@@ -284,7 +286,7 @@ public interface CommandsFactory {
     * @param gtx
     * @return a LockControlCommand
     */
-   LockControlCommand buildLockControlCommand(Collection<Object> keys, Set<Flag> flags, GlobalTransaction gtx);
+   LockControlCommand buildLockControlCommand(Collection<?> keys, Set<Flag> flags, GlobalTransaction gtx);
 
    /**
     * Same as {@link #buildLockControlCommand(Object, java.util.Set, org.infinispan.transaction.xa.GlobalTransaction)}
@@ -293,7 +295,7 @@ public interface CommandsFactory {
    LockControlCommand buildLockControlCommand(Object key, Set<Flag> flags, GlobalTransaction gtx);
 
 
-   LockControlCommand buildLockControlCommand(Collection keys, Set<Flag> flags);
+   LockControlCommand buildLockControlCommand(Collection<?> keys, Set<Flag> flags);
 
    /**
     * Builds a StateRequestCommand used for requesting transactions and locks and for starting or canceling transfer of cache entries.
@@ -388,10 +390,9 @@ public interface CommandsFactory {
    /**
     * Builds a CreateCacheCommand used to create/start cache around Infinispan cluster
     *
-    * @param start if true, then this command also makes sure that the cache is started on all the nodes in the cluster.
-    * @param size the expected number of nodes where this node runs
+    * @param size If {@code size > 0}, the command will wait until the cache runs on at least {@code size} nodes.
     */
-   CreateCacheCommand buildCreateCacheCommand(String tmpCacheName, String defaultTmpCacheConfigurationName, boolean start, int size);
+   CreateCacheCommand buildCreateCacheCommand(String tmpCacheName, String defaultTmpCacheConfigurationName, int size);
 
    /**
     * Builds CancelCommandCommand used to cancel other commands executing on Infinispan cluster
@@ -446,7 +447,7 @@ public interface CommandsFactory {
     * @param <C> The converted type after the value is applied from the converter
     * @return the EntryRequestCommand created
     */
-   <K, V, C> EntryRequestCommand<K, V, C> buildEntryRequestCommand(UUID identifier, Set<Integer> segments,
+   <K, V, C> EntryRequestCommand<K, V, C> buildEntryRequestCommand(UUID identifier, Set<Integer> segments, Set<K> keysToFilter,
                                                 KeyValueFilter<? super K, ? super V> filter,
                                                 Converter<? super K, ? super V, C> converter, Set<Flag> flags);
 
@@ -476,4 +477,19 @@ public interface CommandsFactory {
     */
    GetKeysInGroupCommand buildGetKeysInGroupCommand(Set<Flag> flags, String groupName);
 
+   <K> StreamRequestCommand<K> buildStreamRequestCommand(UUID id, boolean parallelStream, StreamRequestCommand.Type type,
+           Set<Integer> segments, Set<K> keys, Set<K> excludedKeys, boolean includeLoader, Object terminalOperation);
+
+   /**
+    * Builds {@link StreamResponseCommand} used to send back a response either intermediate or complete to the
+    * originating node with the information for the stream request.
+    * @param identifier the unique identifier for the stream request
+    * @param complete whether or not this is an intermediate or final response from this node for the given id
+    * @param lostSegments what segments that were lost during processing
+    * @param response the actual response
+    * @param <R> type of response
+    * @return the command to send back the response
+    */
+   <R> StreamResponseCommand<R> buildStreamResponseCommand(UUID identifier, boolean complete, Set<Integer> lostSegments,
+           R response);
 }

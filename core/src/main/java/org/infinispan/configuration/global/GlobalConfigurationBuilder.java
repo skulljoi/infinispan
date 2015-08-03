@@ -19,10 +19,12 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
    private final GlobalJmxStatisticsConfigurationBuilder globalJmxStatistics;
    private final SerializationConfigurationBuilder serialization;
    private final GlobalSecurityConfigurationBuilder security;
-   private final ThreadPoolConfigurationBuilder evictionThreadPool;
+   private final ThreadPoolConfigurationBuilder expirationThreadPool;
    private final ThreadPoolConfigurationBuilder listenerThreadPool;
    private final ThreadPoolConfigurationBuilder replicationQueueThreadPool;
    private final ThreadPoolConfigurationBuilder persistenceThreadPool;
+   private final ThreadPoolConfigurationBuilder stateTransferThreadPool;
+   private final ThreadPoolConfigurationBuilder asyncThreadPool;
    private final ShutdownConfigurationBuilder shutdown;
    private final List<Builder<?>> modules = new ArrayList<Builder<?>>();
    private final SiteConfigurationBuilder site;
@@ -37,10 +39,12 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
       this.security = new GlobalSecurityConfigurationBuilder(this);
       this.shutdown = new ShutdownConfigurationBuilder(this);
       this.site = new SiteConfigurationBuilder(this);
-      this.evictionThreadPool = new ThreadPoolConfigurationBuilder(this);
+      this.expirationThreadPool = new ThreadPoolConfigurationBuilder(this);
       this.listenerThreadPool = new ThreadPoolConfigurationBuilder(this);
       this.replicationQueueThreadPool = new ThreadPoolConfigurationBuilder(this);
       this.persistenceThreadPool = new ThreadPoolConfigurationBuilder(this);
+      this.stateTransferThreadPool = new ThreadPoolConfigurationBuilder(this);
+      this.asyncThreadPool = new ThreadPoolConfigurationBuilder(this);
    }
 
    /**
@@ -136,11 +140,6 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
       return null;
    }
 
-   /**
-    * @deprecated This method always returns null now.
-    * Set thread pool via {@link #evictionThreadPool()} instead.
-    */
-   @Deprecated
    @Override
    public ScheduledExecutorFactoryConfigurationBuilder evictionScheduledExecutor() {
       return null;
@@ -156,8 +155,17 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
       return null;
    }
 
+   /**
+    * @deprecated this returns the thread pool returned from {@link GlobalConfigurationBuilder#expirationThreadPool}
+    */
+   @Deprecated
+   @Override
    public ThreadPoolConfigurationBuilder evictionThreadPool() {
-      return evictionThreadPool;
+      return expirationThreadPool;
+   }
+
+   public ThreadPoolConfigurationBuilder expirationThreadPool() {
+      return expirationThreadPool;
    }
 
    public ThreadPoolConfigurationBuilder listenerThreadPool() {
@@ -170,6 +178,14 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
 
    public ThreadPoolConfigurationBuilder persistenceThreadPool() {
       return persistenceThreadPool;
+   }
+   
+   public ThreadPoolConfigurationBuilder stateTransferThreadPool() {
+      return stateTransferThreadPool;
+   }
+
+   public ThreadPoolConfigurationBuilder asyncThreadPool() {
+      return asyncThreadPool;
    }
 
    @Override
@@ -218,8 +234,8 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
 
    @SuppressWarnings("unchecked")
    public void validate() {
-      for (Builder<?> validatable : asList(evictionThreadPool, listenerThreadPool,
-            replicationQueueThreadPool, persistenceThreadPool,
+      for (Builder<?> validatable : asList(expirationThreadPool, listenerThreadPool,
+            replicationQueueThreadPool, persistenceThreadPool, stateTransferThreadPool,
             globalJmxStatistics, transport, security, serialization, shutdown, site)) {
          validatable.validate();
       }
@@ -235,10 +251,12 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
       for (Builder<?> module : modules)
          modulesConfig.add(module.create());
       return new GlobalConfiguration(
-            evictionThreadPool.create(),
+            expirationThreadPool.create(),
             listenerThreadPool.create(),
             replicationQueueThreadPool.create(),
             persistenceThreadPool.create(),
+            stateTransferThreadPool.create(),
+            asyncThreadPool.create(),
             globalJmxStatistics.create(),
             transport.create(),
             security.create(),
@@ -258,10 +276,11 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
          builder.read(c);
       }
 
-      evictionThreadPool.read(template.evictionThreadPool());
+      expirationThreadPool.read(template.evictionThreadPool());
       listenerThreadPool.read(template.listenerThreadPool());
       replicationQueueThreadPool.read(template.replicationQueueThreadPool());
       persistenceThreadPool.read(template.persistenceThreadPool());
+      stateTransferThreadPool.read(template.stateTransferThreadPool());
       globalJmxStatistics.read(template.globalJmxStatistics());
       security.read(template.security());
       serialization.read(template.serialization());
@@ -280,7 +299,7 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
    @Override
    public String toString() {
       return "GlobalConfigurationBuilder{" +
-            "evictionExecutorThreadPool=" + evictionThreadPool +
+            "evictionExecutorThreadPool=" + expirationThreadPool +
             ", listenerExecutorThreadPool=" + listenerThreadPool +
             ", cl=" + cl +
             ", transport=" + transport +
@@ -288,6 +307,7 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
             ", serialization=" + serialization +
             ", replicationQueueThreadPool=" + replicationQueueThreadPool +
             ", persistenceThreadPool=" + persistenceThreadPool +
+            ", stateTransferThreadPool=" + stateTransferThreadPool +
             ", security=" + security +
             ", shutdown=" + shutdown +
             ", site=" + site +
@@ -301,13 +321,15 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
 
       GlobalConfigurationBuilder that = (GlobalConfigurationBuilder) o;
 
-      if (!evictionThreadPool.equals(that.evictionThreadPool))
+      if (!expirationThreadPool.equals(that.expirationThreadPool))
          return false;
       if (!listenerThreadPool.equals(that.listenerThreadPool))
          return false;
       if (!replicationQueueThreadPool.equals(that.replicationQueueThreadPool))
          return false;
       if (!persistenceThreadPool.equals(that.persistenceThreadPool))
+         return false;
+      if(!stateTransferThreadPool.equals(that.stateTransferThreadPool))
          return false;
       if (cl != null ? !cl.equals(that.cl) : that.cl != null) return false;
       if (!globalJmxStatistics.equals(that.globalJmxStatistics))
@@ -330,10 +352,11 @@ public class GlobalConfigurationBuilder implements GlobalConfigurationChildBuild
       result = 31 * result + (transport.hashCode());
       result = 31 * result + (globalJmxStatistics.hashCode());
       result = 31 * result + (serialization.hashCode());
-      result = 31 * result + (evictionThreadPool.hashCode());
+      result = 31 * result + (expirationThreadPool.hashCode());
       result = 31 * result + (listenerThreadPool.hashCode());
       result = 31 * result + (replicationQueueThreadPool.hashCode());
       result = 31 * result + (persistenceThreadPool.hashCode());
+      result = 31 * result + (stateTransferThreadPool.hashCode());
       result = 31 * result + (shutdown.hashCode());
       result = 31 * result + (site.hashCode());
       result = 31 * result + (security.hashCode());

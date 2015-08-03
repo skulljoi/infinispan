@@ -2,6 +2,8 @@ package org.infinispan.notifications.cachelistener.filter;
 
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.commons.util.Util;
+import org.infinispan.factories.ComponentRegistry;
+import org.infinispan.factories.annotations.Inject;
 import org.infinispan.filter.KeyValueFilter;
 import org.infinispan.marshall.core.Ids;
 import org.infinispan.metadata.Metadata;
@@ -10,7 +12,6 @@ import org.infinispan.notifications.cachelistener.event.Event;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
-import java.io.Serializable;
 import java.util.Set;
 
 /**
@@ -22,7 +23,7 @@ import java.util.Set;
  * @author wburns
  * @since 7.0
  */
-public class CacheEventFilterAsKeyValueFilter<K, V> implements KeyValueFilter<K, V>, Serializable {
+public class CacheEventFilterAsKeyValueFilter<K, V> implements KeyValueFilter<K, V> {
    private static final EventType CREATE_EVENT = new EventType(false, false, Event.Type.CACHE_ENTRY_CREATED);
 
    private final CacheEventFilter<K, V> filter;
@@ -33,7 +34,12 @@ public class CacheEventFilterAsKeyValueFilter<K, V> implements KeyValueFilter<K,
 
    @Override
    public boolean accept(K key, V value, Metadata metadata) {
-      return filter.accept(key, value, metadata, null, null, CREATE_EVENT);
+      return filter.accept(key, null, null, value, metadata, CREATE_EVENT);
+   }
+
+   @Inject
+   protected void injectDependencies(ComponentRegistry cr) {
+      cr.wireDependencies(filter);
    }
 
    public static class Externalizer extends AbstractExternalizer<CacheEventFilterAsKeyValueFilter> {

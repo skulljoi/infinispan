@@ -1,5 +1,6 @@
 package org.infinispan.configuration;
 
+import static org.testng.AssertJUnit.assertNull;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.ClusteringConfiguration;
 import org.infinispan.configuration.cache.Configuration;
@@ -83,6 +84,36 @@ public class ConfigurationOverrideTest extends AbstractInfinispanTest {
       builder2.eviction().maxEntries(1000);
       Configuration configuration = cm.defineConfiguration("named", builder2.build());
       assertEquals(1, configuration.persistence().stores().size());
+   }
+
+   public void testPartialOverride() {
+      ConfigurationBuilder baseBuilder = new ConfigurationBuilder();
+      baseBuilder.eviction().maxEntries(200).strategy(LIRS);
+      Configuration base = baseBuilder.build();
+      ConfigurationBuilder overrideBuilder = new ConfigurationBuilder();
+      overrideBuilder.read(base).locking().concurrencyLevel(31);
+      Configuration override = overrideBuilder.build();
+      assertEquals(200, base.eviction().maxEntries());
+      assertEquals(200, override.eviction().maxEntries());
+      assertEquals(LIRS, base.eviction().strategy());
+      assertEquals(LIRS, override.eviction().strategy());
+      assertEquals(32, base.locking().concurrencyLevel());
+      assertEquals(31, override.locking().concurrencyLevel());
+   }
+
+   public void testConfigurationUndefine() {
+      cm = new DefaultCacheManager(new GlobalConfigurationBuilder().build());
+      cm.defineConfiguration("testConfig", new ConfigurationBuilder().build());
+      cm.undefineConfiguration("testConfig");
+      assertNull(cm.getCacheConfiguration("testConfig"));
+   }
+
+   @Test(expectedExceptions=IllegalStateException.class)
+   public void testConfigurationUndefineWhileInUse() {
+      cm = new DefaultCacheManager(new GlobalConfigurationBuilder().build());
+      cm.defineConfiguration("testConfig", new ConfigurationBuilder().build());
+      cm.getCache("testConfig");
+      cm.undefineConfiguration("testConfig");
    }
 
 }

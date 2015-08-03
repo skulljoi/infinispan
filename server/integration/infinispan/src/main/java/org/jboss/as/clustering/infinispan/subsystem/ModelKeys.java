@@ -31,6 +31,7 @@ public class ModelKeys {
     static final String ALIAS = "alias";
     static final String ALIASES = "aliases";
     static final String APPEND_CACHE_NAME_TO_PATH = "append-cache-name-to-path";
+    static final String ASYNC_EXECUTOR = "async-executor";
     static final String ASYNC_MARSHALLING = "async-marshalling";
     static final String AUDIT_LOGGER = "audit-logger";
     static final String AUTHORIZATION = "authorization";
@@ -54,6 +55,7 @@ public class ModelKeys {
     static final String CACHE_SIZE = "cache-size";
     // static final String CACHE_MODE = "cache-mode";
     static final String CACHE_CONTAINER = "cache-container";
+    static final String CHANNEL = "channel";
     static final String CHUNK_SIZE = "chunk-size";
     static final String CLASS = "class";
     static final String CLEAR_THRESHOLD = "clear-threshold";
@@ -69,17 +71,21 @@ public class ModelKeys {
     static final String CONCURRENCY_LEVEL = "concurrency-level";
     static final String CONNECTION_POOL = "connection-pool";
     static final String CONNECTION_TIMEOUT = "connection-timeout";
+    static final String CREATE_ON_START = "create-on-start";
     static final String CUSTOM_ROLE_MAPPER = "custom-role-mapper";
     static final String DATA_COLUMN = "data-column";
     static final String DATASOURCE = "datasource";
     static final String DEFAULT_CACHE = "default-cache";
     static final String DIALECT = "dialect";
     static final String DISTRIBUTED_CACHE = "distributed-cache";
+    static final String DROP_ON_EXIT = "drop-on-exit";
     static final String ENABLED = "enabled";
     static final String ENTRY_TABLE = "entry-table";
     static final String EVICTION = "eviction";
     static final String EVICTION_NAME = "EVICTION";
+    @Deprecated
     static final String EVICTION_EXECUTOR = "eviction-executor";
+    static final String EXPIRATION_EXECUTOR = "expiration-executor";
     static final String EXECUTOR = "executor";
     static final String EXPIRATION = "expiration";
     static final String EXPIRATION_NAME = "EXPIRATION";
@@ -134,6 +140,7 @@ public class ModelKeys {
     static final String MODIFICATION_QUEUE_SIZE = "modification-queue-size";
     static final String MODULE = "module";
     static final String NAME = "name";
+    static final String NOTIFICATIONS = "notifications";
     static final String OUTBOUND_SOCKET_BINDING = "outbound-socket-binding";
     static final String OWNERS = "owners";
     static final String PARTITION_HANDLING = "partition-handling";
@@ -175,12 +182,15 @@ public class ModelKeys {
     static final String SHUTDOWN_TIMEOUT = "shutdown-timeout";
     static final String SINGLETON = "singleton";
     static final String SITE = "site";
+    static final String SIZE = "size";
     static final String SOCKET_TIMEOUT = "socket-timeout";
     static final String STACK = "stack";
     static final String START = "start";
     static final String STATE_TRANSFER = "state-transfer";
     static final String STATE_TRANSFER_NAME = "STATE_TRANSFER";
+    static final String STATE_TRANSFER_EXECUTOR = "state-transfer-executor";
     static final String STATISTICS = "statistics";
+    static final String STATISTICS_AVAILABLE = "statistics-available";
     static final String STOP_TIMEOUT = "stop-timeout";
     static final String STORE = "store";
     static final String STORE_NAME = "STORE";

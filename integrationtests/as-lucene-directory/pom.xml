@@ -5,7 +5,7 @@
    <parent>
       <groupId>org.infinispan</groupId>
       <artifactId>infinispan-parent</artifactId>
-      <version>7.1.1-SNAPSHOT</version>
+      <version>8.0.0-SNAPSHOT</version>
       <relativePath>../../parent/pom.xml</relativePath>
    </parent>
 
@@ -31,6 +31,30 @@
          <scope>test</scope>
       </dependency>
       <dependency>
+         <groupId>org.hibernate</groupId>
+         <artifactId>hibernate-search-backend-jms</artifactId>
+         <version>${version.hibernate.search}</version>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.hibernate</groupId>
+         <artifactId>hibernate-search</artifactId>
+         <version>${version.hibernate.search}</version>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.jboss.spec.javax.ejb</groupId>
+         <artifactId>jboss-ejb-api_3.2_spec</artifactId>
+         <version>1.0.0.Final</version>
+         <scope>provided</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.jboss.spec.javax.jms</groupId>
+         <artifactId>jboss-jms-api_2.0_spec</artifactId>
+         <version>1.0.0.Final</version>
+         <scope>provided</scope>
+      </dependency>
+      <dependency>
          <groupId>org.jboss.arquillian.junit</groupId>
          <artifactId>arquillian-junit-container</artifactId>
          <scope>test</scope>
@@ -52,7 +76,7 @@
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>org.wildfly</groupId>
+         <groupId>org.wildfly.arquillian</groupId>
          <artifactId>wildfly-arquillian-container-managed</artifactId>
          <scope>test</scope>
       </dependency>
@@ -82,6 +106,17 @@
          <groupId>org.infinispan</groupId>
          <artifactId>infinispan-lucene-directory</artifactId>
          <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>com.h2database</groupId>
+         <artifactId>h2</artifactId>
+         <scope>test</scope>
+         <!--
+           This H2 version has to match the version bundled within WildFly
+           as we start the server and then connect to it from within WildFly:
+           it can not connect between different versions.
+           -->
+         <version>${version.h2.driver-within-wildfly}</version>
       </dependency>
    </dependencies>
 
@@ -116,6 +151,9 @@
                   </goals>
                   <configuration>
                      <redirectTestOutputToFile>true</redirectTestOutputToFile>
+                      <systemPropertyVariables>
+                          <version.hibernate.search>${version.hibernate.search}</version.hibernate.search>
+                      </systemPropertyVariables>
                   </configuration>
                </execution>
             </executions>
@@ -137,7 +175,23 @@
                            <version>${version.wildfly}</version>
                            <type>zip</type>
                            <overWrite>false</overWrite>
-                           <outputDirectory>${project.build.directory}</outputDirectory>
+                           <outputDirectory>${project.build.directory}/node1</outputDirectory>
+                        </artifactItem>
+                        <artifactItem>
+                           <groupId>org.wildfly</groupId>
+                           <artifactId>wildfly-dist</artifactId>
+                           <version>${version.wildfly}</version>
+                           <type>zip</type>
+                           <overWrite>false</overWrite>
+                           <outputDirectory>${project.build.directory}/node2</outputDirectory>
+                        </artifactItem>
+                        <artifactItem>
+                           <groupId>org.infinispan</groupId>
+                           <artifactId>infinispan-as-embedded-modules</artifactId>
+                           <version>${project.version}</version>
+                           <type>zip</type>
+                           <overWrite>true</overWrite>
+                           <outputDirectory>${project.build.directory}/node1/wildfly-${version.wildfly}/modules</outputDirectory>
                         </artifactItem>
                         <artifactItem>
                            <groupId>org.infinispan</groupId>
@@ -145,13 +199,52 @@
                            <version>${project.version}</version>
                            <type>zip</type>
                            <overWrite>false</overWrite>
-                           <outputDirectory>${project.build.directory}/wildfly-${version.wildfly}/modules</outputDirectory>
+                           <outputDirectory>${project.build.directory}/node2/wildfly-${version.wildfly}/modules</outputDirectory>
                         </artifactItem>
                      </artifactItems>
                   </configuration>
                </execution>
             </executions>
          </plugin>
+         <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-resources-plugin</artifactId>
+            <executions>
+                  
+               <execution>
+                  <id>configure-as-node-node1</id>
+                  <phase>pre-integration-test</phase>
+                  <goals>
+                     <goal>copy-resources</goal>
+                  </goals>
+                  <configuration>
+                     <outputDirectory>${project.build.directory}/node1/wildfly-${version.wildfly}</outputDirectory>
+                     <overwrite>true</overwrite>
+                     <resources>
+                         <resource>
+                             <directory>${basedir}/src/wildflyConfig</directory>
+                         </resource>
+                        </resources>
+                  </configuration>
+               </execution>
+               <execution>
+                  <id>configure-as-node-node2</id>
+                  <phase>pre-integration-test</phase>
+                  <goals>
+                     <goal>copy-resources</goal>
+                  </goals>
+                  <configuration>
+                     <outputDirectory>${project.build.directory}/node2/wildfly-${version.wildfly}</outputDirectory>
+                         <overwrite>true</overwrite>
+                          <resources>
+                              <resource>
+                                  <directory>${basedir}/src/wildflyConfig</directory>
+                              </resource>
+                          </resources>
+                      </configuration>
+                  </execution>
+              </executions>
+          </plugin>
       </plugins>
    </build>
 

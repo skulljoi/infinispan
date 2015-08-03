@@ -24,6 +24,11 @@ public final class NotExpr implements BooleanExpr {
 
    @Override
    public String toString() {
-      return "NotExpr(" + child + ')';
+      return "NOT(" + child + ')';
+   }
+
+   @Override
+   public String toJpaString() {
+      return "NOT(" + child.toJpaString() + ")";
    }
 }

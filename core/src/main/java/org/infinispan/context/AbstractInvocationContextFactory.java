@@ -1,10 +1,10 @@
 package org.infinispan.context;
 
-import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commons.equivalence.Equivalence;
 import org.infinispan.configuration.cache.Configuration;
-import org.infinispan.factories.annotations.Start;
+import org.infinispan.context.impl.ClearInvocationContext;
 import org.infinispan.remoting.transport.Address;
 
 
@@ -29,6 +29,17 @@ public abstract class AbstractInvocationContextFactory implements InvocationCont
    @Override
    public InvocationContext createRemoteInvocationContextForCommand(
          VisitableCommand cacheCommand, Address origin) {
-      return createRemoteInvocationContext(origin);
+      return cacheCommand instanceof ClearCommand ? createClearInvocationContext(origin) :
+            createRemoteInvocationContext(origin);
+   }
+
+   @Override
+   public final InvocationContext createClearNonTxInvocationContext() {
+      return createClearInvocationContext(null);
+   }
+
+   private ClearInvocationContext createClearInvocationContext(Address origin) {
+      ClearInvocationContext context = new ClearInvocationContext(origin);
+      return context;
    }
 }

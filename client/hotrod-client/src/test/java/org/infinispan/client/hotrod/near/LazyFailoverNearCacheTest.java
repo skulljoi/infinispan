@@ -15,6 +15,7 @@ import java.util.List;
 import static org.infinispan.client.hotrod.test.HotRodClientTestingUtil.findServerAndKill;
 import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheConfiguration;
 
+@Deprecated
 @Test(groups = "functional", testName = "client.hotrod.near.LazyFailoverNearCacheTest")
 public class LazyFailoverNearCacheTest extends EagerFailoverNearCacheTest {
 
@@ -37,8 +38,11 @@ public class LazyFailoverNearCacheTest extends EagerFailoverNearCacheTest {
          // each client to do an operation to receive the near cache clear.
          // These gets should return non-null, but the get should be resolved remotely!
          stickyClient.get(1, "v1").expectNearClear().expectNearPutIfAbsent(1, "v1");
+         stickyClient.expectNoNearEvents();
          headClient().get(2, "v1").expectNearClear().expectNearPutIfAbsent(2, "v1");
+         headClient().expectNoNearEvents();
          tailClient().get(3, "v1").expectNearClear().expectNearPutIfAbsent(3, "v1");
+         tailClient().expectNoNearEvents();
       } finally {
          stickyClient.stop();
       }

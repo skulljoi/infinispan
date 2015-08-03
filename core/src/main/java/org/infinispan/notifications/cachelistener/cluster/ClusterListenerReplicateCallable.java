@@ -5,14 +5,13 @@ import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.commons.util.Util;
 import org.infinispan.distexec.DistributedCallable;
 import org.infinispan.distexec.DistributedExecutorService;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.marshall.core.Ids;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilterConverter;
-import org.infinispan.notifications.cachelistener.filter.CompositeCacheEventFilter;
-import org.infinispan.notifications.cachelistener.filter.PostCacheEventFilter;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.util.logging.Log;
@@ -60,12 +59,19 @@ public class ClusterListenerReplicateCallable<K, V> implements DistributedCallab
    @Override
    public void setEnvironment(Cache<K, V> cache, Set<K> inputKeys) {
       cacheManager = cache.getCacheManager();
-      cacheNotifier = cache.getAdvancedCache().getComponentRegistry().getComponent(CacheNotifier.class);
+      ComponentRegistry componentRegistry = cache.getAdvancedCache().getComponentRegistry();
+      cacheNotifier = componentRegistry.getComponent(CacheNotifier.class);
       cacheManagerNotifier = cache.getCacheManager().getGlobalComponentRegistry().getComponent(
             CacheManagerNotifier.class);
       distExecutor = SecurityActions.getDefaultExecutorService(cache);
       ourAddress = cache.getCacheManager().getAddress();
-      eventManager = cache.getAdvancedCache().getComponentRegistry().getComponent(ClusterEventManager.class);
+      eventManager = componentRegistry.getComponent(ClusterEventManager.class);
+      if (filter != null) {
+         componentRegistry.wireDependencies(filter);
+      }
+      if (converter != null && converter != filter) {
+         componentRegistry.wireDependencies(converter);
+      }
    }
 
    @Override
@@ -88,11 +94,8 @@ public class ClusterListenerReplicateCallable<K, V> implements DistributedCallab
                }
                if (!alreadyInstalled) {
                   RemoteClusterListener listener = new RemoteClusterListener(identifier, origin, distExecutor, cacheNotifier,
-                                                                           cacheManagerNotifier, eventManager, sync);
-                  // We only need to use the post cache event filter when a filter is provided, since the remote cluster listener
-                  // will ignore pre events anyways.  This is mostly so a user filter is not notified of the pre event.
-                  cacheNotifier.addListener(listener, 
-                        filter != null ? new CompositeCacheEventFilter(new PostCacheEventFilter(), filter) : null, converter);
+                                                                             cacheManagerNotifier, eventManager, sync);
+                  cacheNotifier.addListener(listener, filter, converter);
                   cacheManagerNotifier.addListener(listener);
                   // It is possible the member is now gone after registered, if so we have to remove just to be sure
                   if (!cacheManager.getMembers().contains(origin)) {

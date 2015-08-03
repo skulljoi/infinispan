@@ -1,5 +1,6 @@
 package org.infinispan.iteration.impl;
 
+import org.infinispan.Cache;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.container.entries.CacheEntry;
@@ -17,6 +18,9 @@ import java.util.UUID;
  *
  * @author wburns
  * @since 7.0
+ * @deprecated Please use {@link Collection#stream()} method on either {@link Cache#entrySet()},
+ * {@link Cache#keySet()} or {@link Cache#values()}.  The {@link org.infinispan.filter.CacheFilters} can be used to
+ * bridge between filter/converters and proper stream types
  */
 public interface EntryRetriever<K, V> {
    /**
@@ -24,11 +28,12 @@ public interface EntryRetriever<K, V> {
     * @param identifier The unique identifier of the iteration request
     * @param origin The node that sent the iteration request
     * @param segments The segments this node wants
+    * @param keysToFilter The keys to filter out (can be {@code null})
     * @param filter The filter to be applied to determine if a value should be used
     * @param converter The converter to run on the values retrieved before returning
     * @param <C> The resulting type of the Converter
     */
-   public <C> void startRetrievingValues(UUID identifier, Address origin, Set<Integer> segments,
+   public <C> void startRetrievingValues(UUID identifier, Address origin, Set<Integer> segments, Set<K> keysToFilter,
                                         KeyValueFilter<? super K, ? super V> filter,
                                         Converter<? super K, ? super V, C> converter,
                                         Set<Flag> flagss);

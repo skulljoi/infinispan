@@ -19,7 +19,6 @@
         <extension module="org.jboss.as.remoting"/>
         <extension module="org.jboss.as.sar"/>
         <extension module="org.jboss.as.security"/>
-        <extension module="org.jboss.as.threads"/>
         <extension module="org.jboss.as.transactions"/>
         <extension module="org.jboss.as.webservices"/>
         <extension module="org.jboss.as.weld"/>
@@ -222,7 +221,7 @@
                     <file-store passivation="false" purge="false"/>
                 </local-cache>
             </cache-container>
-            <cache-container name="hibernate" default-cache="local-query" module="org.hibernate">
+            <cache-container name="hibernate" default-cache="local-query" module="org.hibernate.infinispan">
                 <local-cache name="entity">
                     <transaction mode="NON_XA"/>
                     <eviction strategy="LRU" max-entries="10000"/>
@@ -307,7 +306,6 @@
                 </security-domain>
             </security-domains>
         </subsystem>
-        <subsystem xmlns="urn:jboss:domain:threads:1.1"/>
         <subsystem xmlns="urn:jboss:domain:transactions:2.0">
             <core-environment>
                 <process-id>

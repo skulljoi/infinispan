@@ -6,7 +6,6 @@ import org.infinispan.commons.CacheException;
 import org.infinispan.commons.equivalence.Equivalence;
 import org.infinispan.commons.util.CloseableIterator;
 import org.infinispan.commons.util.CollectionFactory;
-import org.infinispan.commons.util.concurrent.ParallelIterableMap;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.InternalEntryFactory;
@@ -62,6 +61,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiConsumer;
 
 import static org.infinispan.factories.KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR;
 
@@ -82,6 +82,7 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
    protected PersistenceManager persistenceManager;
    protected ExecutorService executorService;
    protected Cache<K, V> cache;
+   protected ComponentRegistry componentRegistry;
    protected TimeService timeService;
    protected InternalEntryFactory entryFactory;
    protected Equivalence<K> keyEquivalence;
@@ -95,16 +96,16 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
    public void inject(DataContainer<K, V> dataContainer, PersistenceManager persistenceManager,
                       @ComponentName(ASYNC_TRANSPORT_EXECUTOR) ExecutorService executorService,
                       TimeService timeService, InternalEntryFactory entryFactory, Cache<K, V> cache,
-                      Configuration config) {
+                      Configuration config, ComponentRegistry componentRegistry) {
       this.dataContainer = dataContainer;
       this.persistenceManager = persistenceManager;
       this.executorService = executorService;
       this.timeService = timeService;
       this.entryFactory = entryFactory;
       this.cache = cache;
-
       this.passivationEnabled = config.persistence().passivation();
       this.keyEquivalence = config.dataContainer().keyEquivalence();
+      this.componentRegistry = componentRegistry;
    }
 
    @Start
@@ -151,14 +152,13 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
    }
 
    @Override
-   public <C> void startRetrievingValues(UUID identifier, Address origin, Set<Integer> segments,
+   public <C> void startRetrievingValues(UUID identifier, Address origin, Set<Integer> segments, Set<K> keysToFilter,
                                             KeyValueFilter<? super K, ? super V> filter,
                                             Converter<? super K, ? super V, C> converter, Set<Flag> flags) {
       throw new UnsupportedOperationException();
    }
 
    protected <C> void wireFilterAndConverterDependencies(KeyValueFilter<? super K, ? super V> filter, Converter<? super K, ? super V, C> converter) {
-      ComponentRegistry componentRegistry = cache.getAdvancedCache().getComponentRegistry();
       if (filter != null) {
          componentRegistry.wireDependencies(filter);
       }
@@ -185,9 +185,9 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
 
    protected class KeyValueActionForCacheLoaderTask implements AdvancedCacheLoader.CacheLoaderTask<K, V> {
 
-      private final ParallelIterableMap.KeyValueAction<? super K, ? super InternalCacheEntry<K, V>> action;
+      private final BiConsumer<? super K, ? super InternalCacheEntry<K, V>> action;
 
-      public KeyValueActionForCacheLoaderTask(ParallelIterableMap.KeyValueAction<? super K, ? super InternalCacheEntry<K, V>> action) {
+      public KeyValueActionForCacheLoaderTask(BiConsumer<? super K, ? super InternalCacheEntry<K, V>> action) {
          this.action = action;
       }
 
@@ -199,7 +199,7 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
             InternalMetadata metadata = marshalledEntry.getMetadata();
             if (metadata == null || !metadata.isExpired(timeService.wallClockTime())) {
                InternalCacheEntry<K, V> ice = PersistenceUtil.convert(marshalledEntry, entryFactory);
-               action.apply(marshalledEntry.getKey(), ice);
+               action.accept(marshalledEntry.getKey(), ice);
             }
             if (Thread.interrupted()) {
                throw new InterruptedException();
@@ -210,21 +210,6 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
 
    protected boolean shouldUseLoader(Set<Flag> flags) {
       return flags == null || !flags.contains(Flag.SKIP_CACHE_LOAD);
-   }
-
-   protected <C> Converter<? super K, ? super V, ? extends C> checkForKeyValueFilterConverter(
-         KeyValueFilter<? super K, ? super V> filter, Converter<? super K, ? super V, ? extends C> converter) {
-      Converter<? super K, ? super V, ? extends C> usedConverter;
-      if (filter == converter && filter instanceof KeyValueFilterConverter) {
-         // If we were supplied an efficient KeyValueFilterConverter don't use a converter!
-         usedConverter = null;
-         if (log.isTraceEnabled()) {
-            log.tracef("User supplied a KeyValueFilterConverter for both filter and converter, so ignoring converter");
-         }
-      } else {
-         usedConverter = converter;
-      }
-      return usedConverter;
    }
 
    protected <C> void registerIterator(Itr<C> itr, Set<Flag> flags) {
@@ -241,10 +226,22 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
 
    @Override
    public <C> CloseableIterator<CacheEntry<K, C>> retrieveEntries(final KeyValueFilter<? super K, ? super V> filter,
-                                                                 Converter<? super K, ? super V, ? extends C> converter,
+                                                                 final Converter<? super K, ? super V, ? extends C> converter,
                                                                  final Set<Flag> flags,
                                                                  final SegmentListener listener) {
-      final Converter<? super K, ? super V, ? extends C> usedConverter = checkForKeyValueFilterConverter(filter, converter);
+      final boolean filterAndConvert;
+      final Converter<? super K, ? super V, ? extends C> usedConverter;
+      if (filter instanceof KeyValueFilterConverter && (filter == converter || converter == null)) {
+         // perform filtering and conversion in a single step
+         filterAndConvert = true;
+         usedConverter = null;
+         if (log.isTraceEnabled()) {
+            log.tracef("User supplied a KeyValueFilterConverter for both filter and converter, so ignoring converter");
+         }
+      } else {
+         filterAndConvert = false;
+         usedConverter = converter;
+      }
       wireFilterAndConverterDependencies(filter, usedConverter);
       // If we aren't using a loader just return the iterator which works on the data container directly
       if (flags != null && flags.contains(Flag.SKIP_CACHE_LOAD) || !cache.getCacheConfiguration().persistence().usingStores()) {
@@ -255,7 +252,7 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
          }
          final Iterator<InternalCacheEntry<K, V>> iterator = dataContainer.iterator();
 
-         return new DataContainerIterator<>(iterator, filter, usedConverter);
+         return new DataContainerIterator<>(iterator, filter, usedConverter, filterAndConvert);
       }
       final Itr<C> iterator = new Itr<C>(batchSize);
       registerIterator(iterator, flags);
@@ -288,7 +285,7 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
                                                                              entry);
                         K key = clone.getKey();
                         if (filter != null) {
-                           if (usedConverter == null && filter instanceof KeyValueFilterConverter) {
+                           if (filterAndConvert) {
                               C converted = ((KeyValueFilterConverter<K, V, C>)filter).filterAndConvert(
                                     key, clone.getValue(), clone.getMetadata());
                               if (converted != null) {
@@ -302,7 +299,7 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
                            }
                         }
 
-                        action.apply(key, clone);
+                        action.accept(key, clone);
                         if (interruptCheck++ % batchSize == 0) {
                            if (Thread.interrupted()) {
                               throw new CacheException("Entry Iterator was interrupted!");
@@ -316,13 +313,13 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
                         cache.addListener(listener);
                      }
                      KeyFilter<K> loaderFilter;
-                     if (filter == null || usedConverter == null && filter instanceof KeyValueFilterConverter) {
+                     if (filter == null || filterAndConvert) {
                         loaderFilter = new CollectionKeyFilter<K>(processedKeys);
                      } else {
                         loaderFilter = new CompositeKeyFilter<K>(new CollectionKeyFilter<K>(processedKeys),
                                                                  new KeyValueFilterAsKeyFilter<K>(filter));
                      }
-                     if (usedConverter == null && filter instanceof KeyValueFilterConverter) {
+                     if (filterAndConvert) {
                         action = new MapAction<>(batchSize, (KeyValueFilterConverter<K, V, C>) filter, queue, handler);
                      }
                      persistenceManager.processOnAllStores(withinThreadExecutor, loaderFilter,
@@ -342,7 +339,7 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
                               // We don't want to modify the entry itself
                               CacheEntry<K, V> clone = entry.clone();
                               if (filter != null) {
-                                 if (usedConverter == null && filter instanceof KeyValueFilterConverter) {
+                                 if (filterAndConvert) {
                                     C converted = ((KeyValueFilterConverter<K, V, C>)filter).filterAndConvert(
                                           key, clone.getValue(), clone.getMetadata());
                                     if (converted != null) {
@@ -355,7 +352,7 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
                                     continue;
                                  }
                               }
-                              action.apply(clone.getKey(), clone);
+                              action.accept(clone.getKey(), clone);
                            }
                         }
                      }
@@ -376,7 +373,7 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
       return iterator;
    }
 
-   private class MapAction<C> implements ParallelIterableMap.KeyValueAction<K, CacheEntry<K, V>> {
+   private class MapAction<C> implements BiConsumer<K, CacheEntry<K, V>> {
       final Converter<? super K, ? super V, ? extends C> converter;
       final Queue<CacheEntry<K, C>> queue;
       final int batchSize;
@@ -393,11 +390,11 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
       }
 
       @Override
-      public void apply(K k, CacheEntry<K, V> kvInternalCacheEntry) {
+      public void accept(K k, CacheEntry<K, V> kvInternalCacheEntry) {
          CacheEntry<K, C> clone = (CacheEntry<K, C>)kvInternalCacheEntry.clone();
          if (converter != null) {
             C value = converter.convert(k, kvInternalCacheEntry.getValue(), kvInternalCacheEntry.getMetadata());
-            if (value == null && converter instanceof KeyValueFilterConverter) {
+            if (value == null && converter instanceof KeyValueFilterConverter) {  // the converter also acts as a filter here
                return;
             }
             clone.setValue(value);
@@ -427,13 +424,16 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
       private final Iterator<InternalCacheEntry<K, V>> iterator;
       private final KeyValueFilter<? super K, ? super V> filter;
       private final Converter<? super K, ? super V, ? extends C> converter;
+      private final boolean filterAndConvert;
 
       public DataContainerIterator(Iterator<InternalCacheEntry<K, V>> iterator, 
             KeyValueFilter<? super K, ? super V> filter,
-            Converter<? super K, ? super V, ? extends C> converter) {
+            Converter<? super K, ? super V, ? extends C> converter,
+            boolean filterAndConvert) {
          this.iterator = iterator;
          this.filter = filter;
          this.converter = converter;
+         this.filterAndConvert = filterAndConvert;
       }
 
       @Override
@@ -464,7 +464,7 @@ public class LocalEntryRetriever<K, V> implements EntryRetriever<K, V> {
                }
                if (filter != null) {
                   K key = clone.getKey();
-                  if (converter == null && filter instanceof KeyValueFilterConverter) {
+                  if (filterAndConvert) {
                      C converted = ((KeyValueFilterConverter<K, V, C>)filter).filterAndConvert(
                            key, clone.getValue(), clone.getMetadata());
                      if (converted != null) {

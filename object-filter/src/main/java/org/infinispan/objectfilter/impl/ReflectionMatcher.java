@@ -33,10 +33,10 @@ public class ReflectionMatcher extends BaseMatcher<Class<?>, ReflectionHelper.Pr
    }
 
    @Override
-   protected ReflectionMatcherEvalContext startContext(Object instance) {
+   protected ReflectionMatcherEvalContext startContext(Object userContext, Object instance, Object eventType) {
       FilterRegistry<Class<?>, ReflectionHelper.PropertyAccessor, String> filterRegistry = getFilterRegistryForType(instance.getClass());
       if (filterRegistry != null) {
-         ReflectionMatcherEvalContext context = createContext(instance);
+         ReflectionMatcherEvalContext context = createContext(userContext, instance, eventType);
          context.initMultiFilterContext(filterRegistry);
          return context;
       }
@@ -44,17 +44,17 @@ public class ReflectionMatcher extends BaseMatcher<Class<?>, ReflectionHelper.Pr
    }
 
    @Override
-   protected ReflectionMatcherEvalContext startContext(Object instance, FilterSubscriptionImpl<Class<?>, ReflectionHelper.PropertyAccessor, String> filterSubscription) {
+   protected ReflectionMatcherEvalContext startContext(Object userContext, Object instance, FilterSubscriptionImpl<Class<?>, ReflectionHelper.PropertyAccessor, String> filterSubscription, Object eventType) {
       if (filterSubscription.getMetadataAdapter().getTypeMetadata() == instance.getClass()) {
-         return createContext(instance);
+         return createContext(userContext, instance, eventType);
       } else {
          return null;
       }
    }
 
    @Override
-   protected ReflectionMatcherEvalContext createContext(Object instance) {
-      return new ReflectionMatcherEvalContext(instance);
+   protected ReflectionMatcherEvalContext createContext(Object userContext, Object instance, Object eventType) {
+      return new ReflectionMatcherEvalContext(userContext, instance, eventType);
    }
 
    @Override
@@ -65,6 +65,11 @@ public class ReflectionMatcher extends BaseMatcher<Class<?>, ReflectionHelper.Pr
    @Override
    protected FilterRegistry<Class<?>, ReflectionHelper.PropertyAccessor, String> getFilterRegistryForType(Class<?> entityType) {
       return filtersByType.get(entityType);
+   }
+
+   @Override
+   public ReflectionPropertyHelper getPropertyHelper() {
+      return propertyHelper;
    }
 
    @Override
@@ -93,21 +98,6 @@ public class ReflectionMatcher extends BaseMatcher<Class<?>, ReflectionHelper.Pr
       @Override
       public List<String> translatePropertyPath(List<String> path) {
          return path;
-      }
-
-      @Override
-      public boolean isRepeatedProperty(List<String> propertyPath) {
-         ReflectionHelper.PropertyAccessor a = ReflectionHelper.getAccessor(clazz, propertyPath.get(0));
-         if (a.isMultiple()) {
-            return true;
-         }
-         for (int i = 1; i < propertyPath.size(); i++) {
-            a = a.getAccessor(propertyPath.get(i));
-            if (a.isMultiple()) {
-               return true;
-            }
-         }
-         return false;
       }
 
       @Override

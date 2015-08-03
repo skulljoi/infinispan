@@ -38,6 +38,7 @@
       <module dir="${output.dir}" target="modules/persistence/rest" module="persistence/rest" artifact="infinispan-cachestore-rest" />
       <module dir="${output.dir}" target="modules/spring" module="spring" artifact="infinispan-spring" />
       <module dir="${output.dir}" target="modules/spring" module="spring4" artifact="infinispan-spring4" />
+      <module dir="${output.dir}" target="modules/tools" module="tools" artifact="infinispan-tools" />
       <module dir="${output.dir}" target="modules/tree" module="tree" artifact="infinispan-tree" />
 
       <!-- RHQ plugin -->
@@ -47,8 +48,6 @@
       <mkdir dir="${output.dir}/demos" />
       <demo target="${output.dir}" demo="gui" />
       <demo target="${output.dir}" demo="distexec" />
-      <demo target="${output.dir}" demo="ec2" />
-      <demo target="${output.dir}" demo="ec2-ui" />
       <demo target="${output.dir}" demo="gridfs-webdav" />
       <demo target="${output.dir}" demo="lucene-directory-demo" />
 
@@ -83,16 +82,16 @@
          <mkdir dir="@{dir}/schema" />
          <copy todir="@{dir}/schema">
             <fileset dir="${basedir}/..">
-               <include name="**/src/main/resources/schema/*.xsd" />
+               <include name="**/src/main/resources/schema/*-${infinispan.core.schema.version}.xsd" />
+               <include name="**/src/main/resources/org/infinispan/spring/config/*${infinispan.core.schema.version}.xsd" />
             </fileset>
             <mapper type="flatten" />
          </copy>
          <!-- JavaDocs -->
-         <mkdir dir="@{dir}/doc" />
-         <copy todir="@{dir}/doc/apidocs">
-            <fileset dir="${project.build.directory}/site/apidocs" />
-         </copy>
-         <copy todir="@{dir}/doc/configdocs">
+         <mkdir dir="@{dir}/docs" />
+         <unjar src="${org.infinispan:infinispan-javadoc:jar:javadoc}" dest="@{dir}/docs/api">
+         </unjar>
+         <copy todir="@{dir}/docs/config">
             <fileset dir="${project.build.directory}/site/configdocs" />
          </copy>
       </sequential>

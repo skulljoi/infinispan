@@ -1,13 +1,10 @@
 package org.infinispan.interceptors.locking;
 
 import org.infinispan.InvalidCacheUsageException;
-import org.infinispan.commands.read.AbstractDataCommand;
-import org.infinispan.commands.read.GetCacheEntryCommand;
-import org.infinispan.commands.read.GetKeyValueCommand;
-import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.DataCommand;
+import org.infinispan.commands.read.GetAllCommand;
+import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.PutMapCommand;
-import org.infinispan.commands.write.RemoveCommand;
-import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
@@ -28,15 +25,7 @@ public class NonTransactionalLockingInterceptor extends AbstractLockingIntercept
    }
 
    @Override
-   public final Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
-      return visitDataReadCommand(ctx, command);
-   }
-   @Override
-   public final Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
-      return visitDataReadCommand(ctx, command);
-   }
-
-   private Object visitDataReadCommand(InvocationContext ctx, AbstractDataCommand command) throws Throwable {
+   protected final Object visitDataReadCommand(InvocationContext ctx, DataCommand command) throws Throwable {
       assertNonTransactional(ctx);
       try {
          return invokeNextInterceptor(ctx, command);
@@ -46,70 +35,29 @@ public class NonTransactionalLockingInterceptor extends AbstractLockingIntercept
    }
 
    @Override
-   public Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
+   protected Object visitDataWriteCommand(InvocationContext ctx, DataWriteCommand command) throws Throwable {
       assertNonTransactional(ctx);
-      boolean skipLocking = hasSkipLocking(command);
-      long lockTimeout = getLockAcquisitionTimeout(command, skipLocking);
-      for (Object key: dataContainer.keySet()) {
-         if (shouldLock(key, command)) {
-            lockKey(ctx, key, lockTimeout, skipLocking);
-         }
-      }
-      try {
-         return invokeNextInterceptor(ctx, command);
-      } finally {
-         lockManager.unlockAll(ctx);
-      }
+      return visitNonTxDataWriteCommand(ctx, command);
    }
 
    @Override
+   public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable {
+      assertNonTransactional(ctx);
+      try {
+         return invokeNextInterceptor(ctx, command);
+      } finally {
+         lockManager.unlockAll(ctx);//possibly needed because of L1 locks being acquired
+      }
+   }
+
    public Object visitPutMapCommand(InvocationContext ctx, PutMapCommand command) throws Throwable {
       assertNonTransactional(ctx);
       try {
-         if (!command.isForwarded()) {
-            boolean skipLocking = hasSkipLocking(command);
-            long lockTimeout = getLockAcquisitionTimeout(command, skipLocking);
-            for (Object key : command.getMap().keySet()) {
-               if (shouldLock(key, command))
-                  lockKey(ctx, key, lockTimeout, skipLocking);
-            }
+         if (!command.isForwarded() && !hasSkipLocking(command)) {
+            lockAllAndRecord(ctx, command.getMap().keySet().stream().filter(this::shouldLockKey), getLockTimeoutMillis(command));
          }
          return invokeNextInterceptor(ctx, command);
-      } catch (Throwable te) {
-         throw cleanLocksAndRethrow(ctx, te);
-      }
-      finally {
-         lockManager.unlockAll(ctx);
-      }
-   }
-
-   @Override
-   public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
-      assertNonTransactional(ctx);
-      try {
-         if (!shouldLock(command.getKey(), command))
-            return invokeNextInterceptor(ctx, command);
-         lockKey(ctx, command);
-         return invokeNextInterceptor(ctx, command);
-      } catch (Throwable te) {
-         throw cleanLocksAndRethrow(ctx, te);
       } finally {
-         lockManager.unlockAll(ctx);
-      }
-   }
-
-   @Override
-   public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
-      assertNonTransactional(ctx);
-      try {
-         if (!shouldLock(command.getKey(), command))
-            return invokeNextInterceptor(ctx, command);
-         lockKey(ctx, command);
-         return invokeNextInterceptor(ctx, command);
-      } catch (Throwable te) {
-         throw cleanLocksAndRethrow(ctx, te);
-      }
-      finally {
          lockManager.unlockAll(ctx);
       }
    }

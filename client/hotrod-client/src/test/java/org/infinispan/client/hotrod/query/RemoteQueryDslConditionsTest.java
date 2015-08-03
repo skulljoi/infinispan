@@ -10,10 +10,13 @@ import org.infinispan.client.hotrod.impl.query.RemoteQueryFactory;
 import org.infinispan.client.hotrod.marshall.ProtoStreamMarshaller;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.ModelFactoryPB;
 import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.MarshallerRegistration;
+import org.infinispan.client.hotrod.query.testdomain.protobuf.marshallers.NotIndexedMarshaller;
 import org.infinispan.client.hotrod.test.HotRodClientTestingUtil;
 import org.infinispan.commons.util.Util;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.Index;
+import org.infinispan.protostream.FileDescriptorSource;
+import org.infinispan.protostream.SerializationContext;
 import org.infinispan.query.dsl.Query;
 import org.infinispan.query.dsl.QueryBuilder;
 import org.infinispan.query.dsl.QueryFactory;
@@ -27,6 +30,7 @@ import org.infinispan.server.hotrod.HotRodServer;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.Test;
 
+import java.io.IOException;
 import java.util.List;
 
 import static org.infinispan.client.hotrod.test.HotRodClientTestingUtil.killRemoteCacheManager;
@@ -43,6 +47,11 @@ import static org.junit.Assert.*;
 @Test(groups = "functional", testName = "client.hotrod.query.RemoteQueryDslConditionsTest")
 public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
 
+   private static final String NOT_INDEXED_PROTO_SCHEMA = "package sample_bank_account;\n" +
+         "/* @Indexed(false) */\n" +
+         "message NotIndexed {\n" +
+         "\toptional string notIndexedField = 1;\n" +
+         "}\n";
    protected HotRodServer hotRodServer;
    protected RemoteCacheManager remoteCacheManager;
    protected RemoteCache<Object, Object> remoteCache;
@@ -81,14 +90,21 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
       clientBuilder.marshaller(new ProtoStreamMarshaller());
       remoteCacheManager = new RemoteCacheManager(clientBuilder.build());
       remoteCache = remoteCacheManager.getCache();
+      initProtoSchema(remoteCacheManager);
+   }
 
+   protected void initProtoSchema(RemoteCacheManager remoteCacheManager) throws IOException {
       //initialize server-side serialization context
       RemoteCache<String, String> metadataCache = remoteCacheManager.getCache(ProtobufMetadataManagerConstants.PROTOBUF_METADATA_CACHE_NAME);
       metadataCache.put("sample_bank_account/bank.proto", Util.read(Util.getResourceAsStream("/sample_bank_account/bank.proto", getClass().getClassLoader())));
       assertFalse(metadataCache.containsKey(ProtobufMetadataManagerConstants.ERRORS_KEY_SUFFIX));
+      metadataCache.put("not_indexed.proto", NOT_INDEXED_PROTO_SCHEMA);
 
       //initialize client-side serialization context
-      MarshallerRegistration.registerMarshallers(ProtoStreamMarshaller.getSerializationContext(remoteCacheManager));
+      SerializationContext serCtx = ProtoStreamMarshaller.getSerializationContext(remoteCacheManager);
+      MarshallerRegistration.registerMarshallers(serCtx);
+      serCtx.registerProtoFiles(FileDescriptorSource.fromString("not_indexed.proto", NOT_INDEXED_PROTO_SCHEMA));
+      serCtx.registerMarshaller(new NotIndexedMarshaller());
    }
 
    protected ConfigurationBuilder getConfigurationBuilder() {
@@ -107,7 +123,7 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
 
    @Override
    public void testIndexPresence() {
-      SearchIntegrator searchIntegrator = org.infinispan.query.Search.getSearchManager(cache).getSearchFactory();
+      SearchIntegrator searchIntegrator = org.infinispan.query.Search.getSearchManager(cache).unwrap(SearchIntegrator.class);
 
       assertTrue(searchIntegrator.getIndexedTypes().contains(ProtobufValueWrapper.class));
       assertNotNull(searchIntegrator.getIndexManager(ProtobufValueWrapper.class.getName()));
@@ -118,25 +134,13 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
       assertEquals(RemoteQueryFactory.class, getQueryFactory().getClass());
    }
 
-   @Test(expectedExceptions = HotRodClientException.class, expectedExceptionsMessageRegExp = "java.lang.IllegalArgumentException: ISPN018002: Field notes from type sample_bank_account.User is not indexed")
-   @Override
-   public void testEqNonIndexed() throws Exception {
-      QueryFactory qf = getQueryFactory();
-
-      Query q = qf.from(getModelFactory().getUserImplClass())
-            .having("notes").eq("Lorem ipsum dolor sit amet")
-            .toBuilder().build();
-
-      q.list();
-   }
-
    @Test(enabled = false, expectedExceptions = HotRodClientException.class, expectedExceptionsMessageRegExp = ".*HQL100005:.*", description = "see https://issues.jboss.org/browse/ISPN-4423")
    @Override
    public void testInvalidEmbeddedAttributeQuery() throws Exception {
       QueryFactory qf = getQueryFactory();
 
       QueryBuilder queryBuilder = qf.from(getModelFactory().getUserImplClass())
-            .setProjection("addresses");
+            .select("addresses");
 
       Query q = queryBuilder.build();
 
@@ -154,7 +158,7 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
 
       // all the transactions that happened in January 2013, projected by date field only
       Query q = qf.from(getModelFactory().getTransactionImplClass())
-            .setProjection("date")
+            .select("date")
             .having("date").between(makeDate("2013-01-01"), makeDate("2013-01-31"))
             .toBuilder().build();
 
@@ -180,5 +184,33 @@ public class RemoteQueryDslConditionsTest extends QueryDslConditionsTest {
       List<Account> list = q.list();
       assertEquals(3, list.size());
       assertEquals("Checking account", list.get(0).getDescription());
+   }
+
+   //todo [anistor] the original exception gets wrapped in HotRodClientException
+   @Override
+   @Test(expectedExceptions = HotRodClientException.class, expectedExceptionsMessageRegExp = "org.hibernate.hql.ParsingException: The expression 'surname' must be part of an aggregate function or it should be included in the GROUP BY clause")
+   public void testGroupBy3() throws Exception {
+      super.testGroupBy3();
+   }
+
+   //todo [anistor] null numbers do not seem to work in remote mode
+   @Test(enabled = false)
+   @Override
+   public void testIsNullNumericWithProjection1() throws Exception {
+      super.testIsNullNumericWithProjection1();
+   }
+
+   //todo [anistor] null numbers do not seem to work in remote mode
+   @Test(enabled = false)
+   @Override
+   public void testIsNullNumericWithProjection2() throws Exception {
+      super.testIsNullNumericWithProjection2();
+   }
+
+   //todo [anistor] the original exception gets wrapped in HotRodClientException
+   @Test(expectedExceptions = HotRodClientException.class, expectedExceptionsMessageRegExp = "org.hibernate.hql.ParsingException: Queries containing grouping and aggregation functions must use projections.")
+   @Override
+   public void testGroupBy5() {
+      super.testGroupBy5();
    }
 }

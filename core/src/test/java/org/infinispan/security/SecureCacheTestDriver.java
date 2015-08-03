@@ -2,6 +2,7 @@ package org.infinispan.security;
 
 import org.infinispan.atomic.Delta;
 import org.infinispan.atomic.DeltaAware;
+import org.infinispan.commons.util.InfinispanCollections;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.context.Flag;
 import org.infinispan.filter.KeyFilter;
@@ -18,6 +19,7 @@ import org.infinispan.partitionhandling.AvailabilityMode;
 
 import javax.transaction.NotSupportedException;
 import javax.transaction.SystemException;
+
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
@@ -604,6 +606,11 @@ public class SecureCacheTestDriver {
    }
 
    @TestCachePermission(AuthorizationPermission.ADMIN)
+   public void testGetExpirationManager(SecureCache<String, String> cache) {
+      cache.getExpirationManager();
+   }
+
+   @TestCachePermission(AuthorizationPermission.ADMIN)
    public void testAddInterceptorBefore_CommandInterceptor_Class(SecureCache<String, String> cache) {
       cache.addInterceptorBefore(interceptor, InvocationContextInterceptor.class);
       cache.removeInterceptor(interceptor.getClass());
@@ -637,5 +644,26 @@ public class SecureCacheTestDriver {
    @TestCachePermission(AuthorizationPermission.BULK_WRITE)
    public void testRemoveGroup_String(SecureCache<String, String> cache) {
       cache.removeGroup("someGroup");
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testPutAll_Map_Metadata(SecureCache<String, String> cache) {
+      cache.putAll(Collections.singletonMap("a", "a"), new EmbeddedMetadata.Builder().
+              lifespan(10, TimeUnit.SECONDS).maxIdle(5, TimeUnit.SECONDS).build());
+   }
+
+   @TestCachePermission(AuthorizationPermission.BULK_READ)
+   public void testGetAll_Set(SecureCache<String, String> cache) {
+      cache.getAll(InfinispanCollections.emptySet());
+   }
+
+   @TestCachePermission(AuthorizationPermission.BULK_READ)
+   public void testGetAllCacheEntries_Set(SecureCache<String, String> cache) {
+      cache.getAllCacheEntries(InfinispanCollections.emptySet());
+   }
+
+   @TestCachePermission(AuthorizationPermission.BULK_READ)
+   public void testCacheEntrySet(SecureCache<String, String> cache) {
+      cache.getAdvancedCache().getAllCacheEntries(Collections.emptySet());
    }
 }

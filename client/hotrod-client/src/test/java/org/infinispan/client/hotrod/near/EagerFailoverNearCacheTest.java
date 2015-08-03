@@ -15,6 +15,7 @@ import java.util.List;
 import static org.infinispan.client.hotrod.test.HotRodClientTestingUtil.findServerAndKill;
 import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheConfiguration;
 
+@Deprecated
 @Test(groups = "functional", testName = "client.hotrod.near.EagerFailoverNearCacheTest")
 public class EagerFailoverNearCacheTest extends MultiHotRodServersTest {
 
@@ -44,7 +45,7 @@ public class EagerFailoverNearCacheTest extends MultiHotRodServersTest {
       for (HotRodServer server : servers)
          clientBuilder.addServer().host("127.0.0.1").port(server.getPort());
       clientBuilder.balancingStrategy(StickyServerLoadBalancingStrategy.class);
-      clientBuilder.nearCache().mode(getNearCacheMode());
+      clientBuilder.nearCache().mode(getNearCacheMode()).maxEntries(-1);
       return AssertsNearCache.create(this.<byte[], Object>cache(0), clientBuilder);
    }
 
@@ -63,8 +64,11 @@ public class EagerFailoverNearCacheTest extends MultiHotRodServersTest {
          // each client to do an operation to receive the near cache clear.
          // These gets should return non-null, but the get should be resolved remotely!
          stickyClient.get(1, "v1").expectNearClear().expectNearPutIfAbsent(1, "v1");
+         stickyClient.expectNoNearEvents();
          headClient().get(2, "v1").expectNearClear().expectNearPutIfAbsent(2, "v1");
+         headClient().expectNoNearEvents();
          tailClient().get(3, "v1").expectNearClear().expectNearPutIfAbsent(3, "v1");
+         tailClient().expectNoNearEvents();
       } finally {
          stickyClient.stop();
       }
